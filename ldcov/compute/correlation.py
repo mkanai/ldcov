@@ -1,0 +1,208 @@
+"""
+Core correlation computation module for calculating linkage disequilibrium.
+
+This module provides functions for computing correlation between genetic variants,
+which can be used as a measure of linkage disequilibrium.
+"""
+
+import numpy as np
+import pandas as pd
+from typing import Optional, List, Tuple
+import logging
+import os
+
+# Local compute imports
+from .covariate import regress_out_covariates, standardize_genotypes
+
+# IO imports
+from ..io.bgen_reader import load_bgen
+from ..io.covariate_loader import load_covariates
+from ..io.correlation_io import save_correlation_matrix
+from ..io.bgen_writer import correlation_preserving_transform, write_bgen, save_metadata
+
+
+logger = logging.getLogger(__name__)
+
+
+def load_and_adjust_genotypes(
+    genotype_file: str,
+    covariate_file: Optional[str] = None,
+    region: Optional[str] = None,
+    index_file: Optional[str] = None,
+    sample_file: Optional[str] = None,
+    z_file: Optional[str] = None,
+    covariate_id_col: str = "IID",
+) -> Tuple[np.ndarray, pd.DataFrame, List[str], np.ndarray, np.ndarray]:
+    """
+    Load genotypes, standardize them, and optionally adjust for covariates.
+
+    Parameters:
+    -----------
+    genotype_file : str
+        Path to BGEN genotype file
+    covariate_file : str, optional
+        Path to covariate file for adjustment
+    region : str, optional
+        Genomic region in format "chr:start-end"
+    index_file : str, optional
+        Path to BGEN index file (.bgi)
+    sample_file : str, optional
+        Path to sample file
+    z_file : str, optional
+        Path to .z file specifying which variants to load and their order
+    covariate_id_col : str, optional
+        Column name for sample IDs in covariate file (default: "IID")
+
+    Returns:
+    --------
+    tuple
+        (standardized_genotypes, variant_info, sample_ids, means, norms)
+        - standardized_genotypes: Standardized (and possibly adjusted) genotypes
+        - variant_info: DataFrame with variant information (ordered by .z file if provided)
+        - sample_ids: List of sample IDs
+        - means: Original means before standardization
+        - norms: Original norms before standardization
+    """
+    # Load genotype data
+    logger.info(f"Loading genotype data from BGEN file: {genotype_file}")
+
+    # Process .z file if provided
+    variant_filter = None
+    if z_file is not None:
+        from ..utils.variant_filter import read_z_file, create_variant_filter_from_z
+
+        logger.info(f"Reading variant filter from .z file: {z_file}")
+        z_df = read_z_file(z_file)
+        variant_filter = create_variant_filter_from_z(z_df)
+
+    genotypes, variant_info, sample_ids = load_bgen(
+        file_path=genotype_file,
+        index_path=index_file,
+        sample_path=sample_file,
+        region=region,
+        variant_filter=variant_filter,
+    )
+
+    # Standardize genotypes
+    logger.info("Standardizing genotypes")
+    standardized_genotypes, means, norms = standardize_genotypes(
+        genotypes, center=True, scale=True, inplace=True
+    )
+
+    # Apply covariate adjustment if provided
+    if covariate_file:
+        logger.info(f"Loading covariates from {covariate_file}")
+        covariates = load_covariates(covariate_file, sample_ids, id_col=covariate_id_col)
+
+        # Check if we need to filter genotypes to match covariate samples
+        if len(covariates) < len(sample_ids):
+            logger.info(f"Filtering genotypes to {len(covariates)} samples with covariate data")
+            # Get indices of samples that have covariate data
+            covariate_sample_ids = covariates.index.tolist()
+            sample_indices = [i for i, sid in enumerate(sample_ids) if sid in covariate_sample_ids]
+
+            # Filter genotypes and sample IDs
+            standardized_genotypes = standardized_genotypes[sample_indices, :]
+            sample_ids = [sample_ids[i] for i in sample_indices]
+
+        logger.info("Adjusting genotypes for covariates")
+        standardized_genotypes = regress_out_covariates(
+            standardized_genotypes, covariates, inplace=True
+        )
+
+    return standardized_genotypes, variant_info, sample_ids, means, norms
+
+
+def save_adjusted_genotypes(
+    standardized_genotypes: np.ndarray,
+    variant_info: pd.DataFrame,
+    sample_ids: List[str],
+    output_file: str,
+    means: np.ndarray,
+    norms: np.ndarray,
+) -> None:
+    """
+    Save adjusted genotypes to BGEN format.
+
+    Parameters:
+    -----------
+    standardized_genotypes : numpy.ndarray
+        Standardized genotype matrix (samples x variants)
+    variant_info : pandas.DataFrame
+        Variant information
+    sample_ids : list of str
+        Sample identifiers
+    output_file : str
+        Path to output BGEN file
+    means : numpy.ndarray
+        Original means before standardization
+    norms : numpy.ndarray
+        Original norms before standardization
+    """
+    logger.info(
+        "Converting adjusted genotypes to allelic scale using correlation-preserving transformation"
+    )
+    allelic_genotypes = correlation_preserving_transform(standardized_genotypes)
+
+    logger.info(f"Writing adjusted genotypes to BGEN: {output_file}")
+    write_bgen(allelic_genotypes, variant_info, sample_ids, output_file, bit_depth=16)
+
+    # Save metadata
+    metadata_file = f"{os.path.splitext(output_file)[0]}.metadata.csv.gz"
+    logger.info(f"Saving metadata with standardization parameters to: {metadata_file}")
+    variant_info_with_params = variant_info.copy()
+    variant_info_with_params["mean"] = means
+    variant_info_with_params["norm"] = norms
+    save_metadata(variant_info_with_params, metadata_file)
+
+
+def compute_ld_from_standardized(
+    standardized_genotypes: np.ndarray,
+    variant_info: pd.DataFrame,
+    output_file: str,
+    output_format: str = "matrix",
+) -> None:
+    """
+    Compute LD matrix from standardized genotypes and save to file.
+
+    Parameters:
+    -----------
+    standardized_genotypes : numpy.ndarray
+        Standardized genotype matrix (samples x variants)
+    variant_info : pandas.DataFrame
+        Variant information
+    output_file : str
+        Path to output LD file
+    output_format : str
+        Output format ("matrix", "long", "bcor")
+    """
+    logger.info("Computing LD matrix")
+    corr_matrix = compute_correlation_matrix(standardized_genotypes)
+
+    # Save to file
+    save_correlation_matrix(
+        corr_matrix, output_file, variant_info=variant_info, output_format=output_format
+    )
+
+    logger.info(f"LD matrix saved to {output_file}")
+
+
+def compute_correlation_matrix(standardized_genotypes: np.ndarray) -> np.ndarray:
+    """
+    Compute correlation matrix from standardized genotype data.
+
+    Parameters:
+    -----------
+    standardized_genotypes : numpy.ndarray
+        Standardized genotype matrix (samples x variants). Genotypes should already be
+        standardized (centered and scaled) before calling this function.
+
+    Returns:
+    --------
+    numpy.ndarray
+        Correlation matrix (variants x variants).
+    """
+    # Calculate correlations using dot product of standardized genotypes: t(X_scaled) %*% X_scaled
+    corr_matrix = np.dot(standardized_genotypes.T, standardized_genotypes)
+
+    return corr_matrix

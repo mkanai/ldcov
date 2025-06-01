@@ -1,0 +1,205 @@
+"""
+Command-line interface for the ldcov package.
+
+This module provides a command-line interface for computing
+linkage disequilibrium and adjusting genotypes with ldcov.
+"""
+
+import argparse
+import logging
+import sys
+import os
+from typing import Optional, List  # noqa: F401
+
+from ..compute.correlation import (
+    load_and_adjust_genotypes,
+    save_adjusted_genotypes,
+    compute_ld_from_standardized,
+)
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+
+def parse_args():
+    """
+    Parse command-line arguments.
+
+    Returns:
+    --------
+    argparse.Namespace
+        Parsed arguments
+    """
+    parser = argparse.ArgumentParser(
+        description="ldcov: Compute linkage disequilibrium with optional covariate adjustment.",
+        epilog="""
+Examples:
+  # Compute LD only (no adjusted genotypes saved)
+  ldcov --bgen input.bgen --out output --compute-ld
+
+  # Compute LD and save adjusted genotypes
+  ldcov --bgen input.bgen --out output --compute-ld --export-adjusted-bgen -c covariates.txt
+
+  # Only adjust genotypes (no LD computation)
+  ldcov --bgen input.bgen --out output --export-adjusted-bgen -c covariates.txt
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    # Required arguments
+    parser.add_argument("--bgen", required=True, help="Input BGEN genotype file")
+
+    parser.add_argument(
+        "--out",
+        required=True,
+        help="Output file prefix (extensions will be added automatically)",
+    )
+
+    # Mode flags (at least one required)
+    parser.add_argument(
+        "--compute-ld", action="store_true", help="Compute linkage disequilibrium matrix"
+    )
+
+    parser.add_argument(
+        "--export-adjusted-bgen",
+        action="store_true",
+        help="Export adjusted genotypes to BGEN format",
+    )
+
+    # Optional arguments
+    parser.add_argument("--bgi", help="Path to BGEN index file (.bgi, optional)")
+
+    parser.add_argument("--covariates", "-c", help="Covariate file for adjustment")
+
+    parser.add_argument(
+        "--covariate-id-col",
+        default="IID",
+        help="Column name for sample IDs in covariate file (default: IID)",
+    )
+
+    parser.add_argument("--region", "-r", help='Genomic region in format "chr:start-end"')
+
+    parser.add_argument(
+        "--output-format",
+        choices=["matrix", "long", "bcor"],
+        default="matrix",
+        help="Output format for LD matrix (default: matrix)",
+    )
+
+    parser.add_argument("--sample-file", help="Path to sample file (optional)")
+
+    parser.add_argument(
+        "--z",
+        "--z-file",
+        help="Path to .z file specifying variants to extract and their order (optional)",
+    )
+
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+
+    return parser.parse_args()
+
+
+def validate_args(args):
+    """
+    Validate command-line arguments based on flags.
+
+    Parameters:
+    -----------
+    args : argparse.Namespace
+        Parsed arguments
+
+    Raises:
+    -------
+    ValueError
+        If arguments are invalid for the selected options
+    """
+    # At least one mode flag must be specified
+    if not args.compute_ld and not args.export_adjusted_bgen:
+        raise ValueError("At least one of --compute-ld or --export-adjusted-bgen must be specified")
+
+    # Covariates are required for adjusted genotype export
+    if args.export_adjusted_bgen and not args.covariates:
+        raise ValueError("--covariates is required when using --export-adjusted-bgen")
+
+
+def run_cli():
+    """
+    Main CLI entry point.
+    """
+    # Parse arguments
+    args = parse_args()
+
+    # Configure logging
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    # Validate arguments
+    try:
+        validate_args(args)
+    except ValueError as e:
+        logger.error(f"Invalid arguments: {e}")
+        sys.exit(1)
+
+    # Create output directory if it doesn't exist
+    output_dir = os.path.dirname(os.path.abspath(args.out))
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
+    # Auto-detect BGI file if not specified
+    bgi_file = args.bgi
+    if bgi_file is None:
+        potential_bgi = f"{args.bgen}.bgi"
+        if os.path.exists(potential_bgi):
+            logger.info(f"Using auto-detected BGI file: {potential_bgi}")
+            bgi_file = potential_bgi
+    # Load and adjust genotypes (common step for all modes)
+    result = load_and_adjust_genotypes(
+        genotype_file=args.bgen,
+        covariate_file=args.covariates,
+        region=args.region,
+        index_file=bgi_file,
+        sample_file=args.sample_file,
+        z_file=args.z,
+        covariate_id_col=args.covariate_id_col,
+    )
+    standardized_genotypes, variant_info, sample_ids, means, norms = result
+
+    # Save adjusted genotypes if requested
+    if args.export_adjusted_bgen:
+        adjusted_output_file = f"{args.out}.adj.bgen"
+        logger.info("Saving adjusted genotypes")
+        save_adjusted_genotypes(
+            standardized_genotypes=standardized_genotypes,
+            variant_info=variant_info,
+            sample_ids=sample_ids,
+            output_file=adjusted_output_file,
+            means=means,
+            norms=norms,
+        )
+        logger.info(f"Adjusted genotypes saved to {adjusted_output_file}")
+
+    # Compute LD if requested
+    if args.compute_ld:
+        # Determine LD output file extension based on format
+        if args.output_format == "matrix":
+            ld_output_file = f"{args.out}.ld"
+        elif args.output_format == "long":
+            ld_output_file = f"{args.out}.ld.gz"
+        elif args.output_format == "bcor":
+            ld_output_file = f"{args.out}.bcor"
+
+        logger.info("Computing LD matrix")
+        compute_ld_from_standardized(
+            standardized_genotypes=standardized_genotypes,
+            variant_info=variant_info,
+            output_file=ld_output_file,
+            output_format=args.output_format,
+        )
+        logger.info(f"LD matrix saved to {ld_output_file}")
+
+
+if __name__ == "__main__":
+    run_cli()
