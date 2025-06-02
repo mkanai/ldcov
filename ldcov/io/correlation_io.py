@@ -12,6 +12,10 @@ import logging
 import os
 import gzip
 
+# Import bcor functionality from dedicated modules
+from .bcor_reader import BcorReader
+from .bcor_writer import BcorWriter, save_bcor
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,6 +24,8 @@ def save_correlation_matrix(
     output_file: str,
     variant_info: Optional[pd.DataFrame] = None,
     output_format: str = "matrix",
+    n_samples: int = 1000,
+    compression: int = 1,
 ) -> None:
     """
     Save correlation matrix to file.
@@ -34,6 +40,10 @@ def save_correlation_matrix(
         Variant information
     output_format : str
         Output format ("matrix", "long", "bcor")
+    n_samples : int, optional
+        Number of samples (for bcor format metadata)
+    compression : int, optional
+        Compression level for bcor format (0=1byte, 1=2bytes, 2=4bytes, 3=8bytes)
     """
     # Check output format
     if output_format not in ["matrix", "long", "bcor"]:
@@ -46,9 +56,8 @@ def save_correlation_matrix(
 
     # Save as bcor file if specified
     if output_format == "bcor" or output_file.endswith(".bcor"):
-        # This would be implemented for LDstore2 compatibility
-        logger.warning("BCOR format not yet implemented - using matrix format")
-        output_format = "matrix"
+        save_bcor(corr_matrix, output_file, variant_info, n_samples, compression)
+        return
 
     # Determine if output should be compressed
     is_compressed = output_file.endswith((".gz", ".bgz"))
@@ -128,6 +137,25 @@ def load_correlation_matrix(
         variant_info = data.get("variant_info", None)
         if variant_info is not None and not isinstance(variant_info, pd.DataFrame):
             variant_info = pd.DataFrame(variant_info)
+        return corr_matrix, variant_info
+
+    # Handle bcor format
+    if file_path.endswith(".bcor"):
+        reader = BcorReader(file_path)
+        corr_matrix = reader.read_corr()
+        meta = reader.get_meta()
+
+        # Convert metadata to standard format
+        variant_info = pd.DataFrame(
+            {
+                "id": meta["rsid"],
+                "chrom": meta["chromosome"],
+                "pos": meta["position"],
+                "ref": meta["allele1"],
+                "alt": meta["allele2"],
+            }
+        )
+
         return corr_matrix, variant_info
 
     # Handle txt format (matrix or long)

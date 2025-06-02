@@ -26,8 +26,13 @@ from ldcov.io.bgen_writer import (
 )
 from ldcov.io.correlation_io import save_correlation_matrix, load_correlation_matrix
 from ldcov.io.covariate_loader import load_covariates
+from ldcov.io.bcor_writer import BcorWriter, save_bcor
 from ldcov.compute.covariate import standardize_genotypes
+from ldcov.compute.correlation import load_and_adjust_genotypes, compute_correlation_matrix
 from ldcov.utils.categorical_utils import one_hot_encode_categorical
+
+# Import our own BcorReader
+from ldcov.io.correlation_io import BcorReader
 
 
 class TestIO(unittest.TestCase):
@@ -40,6 +45,8 @@ class TestIO(unittest.TestCase):
         cls.bgen_file = cls.examples_dir / "data" / "data.bgen"
         cls.bgi_file = cls.examples_dir / "data" / "data.bgen.bgi"
         cls.sample_file = cls.examples_dir / "data" / "data.sample"
+        cls.ref_bcor_file = cls.examples_dir / "data" / "data.bcor"
+        cls.ref_ld_file = cls.examples_dir / "data" / "data.ld"
 
         # Create temporary directory for output files
         cls.temp_dir = tempfile.mkdtemp(prefix="ldcov_test_io_")
@@ -220,6 +227,164 @@ class TestIO(unittest.TestCase):
         )
         self.assertTrue(os.path.exists(bcor_file))
 
+    def test_bcor_export_matches_reference(self):
+        """Test that exported bcor matches reference bcor."""
+        # Load data and compute LD
+        standardized_genotypes, variant_info, sample_ids, means, norms = load_and_adjust_genotypes(
+            genotype_file=str(self.bgen_file),
+            sample_file=str(self.sample_file),
+            covariate_file=None,
+        )
+
+        ld_matrix = compute_correlation_matrix(standardized_genotypes)
+
+        # Load reference bcor
+        ref_bcor = BcorReader(str(self.ref_bcor_file))
+        ref_bcor_matrix = ref_bcor.read_corr([], [])
+        ref_meta = ref_bcor.get_meta()
+
+        # Export our LD as bcor
+        output_file = os.path.join(self.temp_dir, "test_bcor_export.bcor")
+
+        # Convert variant info to match bcor format
+        variant_info_bcor = pd.DataFrame(
+            {
+                "id": variant_info["rsid"].tolist(),
+                "chrom": variant_info["chrom"].tolist(),
+                "pos": variant_info["pos"].tolist(),
+                "ref": variant_info["ref"].tolist(),
+                "alt": variant_info["alt"].tolist(),
+            }
+        )
+
+        save_correlation_matrix(
+            corr_matrix=ld_matrix,
+            output_file=output_file,
+            variant_info=variant_info_bcor,
+            output_format="bcor",
+            n_samples=ref_bcor.get_n_samples(),
+            compression=1,
+        )
+
+        # Read back our bcor
+        our_bcor = BcorReader(output_file)
+        our_bcor_matrix = our_bcor.read_corr([], [])
+        our_meta = our_bcor.get_meta()
+
+        # Compare matrices
+        self.assertEqual(our_bcor_matrix.shape, ref_bcor_matrix.shape)
+
+        matrix_diff = np.abs(our_bcor_matrix - ref_bcor_matrix)
+        max_matrix_diff = np.max(matrix_diff)
+        mean_matrix_diff = np.mean(matrix_diff)
+
+        self.assertLess(
+            max_matrix_diff, 1e-6, f"BCOR matrix differs from reference: max_diff={max_matrix_diff}"
+        )
+        self.assertLess(
+            mean_matrix_diff,
+            1e-8,
+            f"BCOR matrix differs from reference: mean_diff={mean_matrix_diff}",
+        )
+
+        # Compare metadata
+        self.assertEqual(len(our_meta), len(ref_meta), "Metadata length mismatch")
+        self.assertEqual(
+            our_bcor.get_n_samples(), ref_bcor.get_n_samples(), "Sample count mismatch"
+        )
+        self.assertEqual(our_bcor.get_n_snps(), ref_bcor.get_n_snps(), "SNP count mismatch")
+
+    def test_bcor_export_different_compression(self):
+        """Test bcor export with different compression levels."""
+        # Create a smaller test matrix
+        n_vars = 10
+        test_matrix = np.random.rand(n_vars, n_vars)
+        test_matrix = (test_matrix + test_matrix.T) / 2  # Make symmetric
+        np.fill_diagonal(test_matrix, 1.0)
+        # Ensure values are in [-1, 1] range
+        test_matrix = np.clip(test_matrix * 2 - 1, -1, 1)
+        np.fill_diagonal(test_matrix, 1.0)
+
+        variant_info = pd.DataFrame(
+            {
+                "id": [f"rs{i}" for i in range(n_vars)],
+                "chrom": ["01"] * n_vars,
+                "pos": list(range(1, n_vars + 1)),
+                "ref": ["A"] * n_vars,
+                "alt": ["G"] * n_vars,
+            }
+        )
+
+        # Test different compression levels
+        for compression in [0, 1, 2, 3]:
+            output_file = os.path.join(self.temp_dir, f"test_compression_{compression}.bcor")
+
+            save_correlation_matrix(
+                corr_matrix=test_matrix,
+                output_file=output_file,
+                variant_info=variant_info,
+                output_format="bcor",
+                n_samples=1000,
+                compression=compression,
+            )
+
+            # Read back and verify
+            reader = BcorReader(output_file)
+            read_matrix = reader.read_corr([], [])
+
+            self.assertEqual(read_matrix.shape, test_matrix.shape)
+
+            # Check that values are reasonably close (precision depends on compression)
+            diff = np.abs(read_matrix - test_matrix)
+            max_diff = np.max(diff)
+
+            # Tolerance depends on compression level
+            if compression == 0:  # 2 bytes
+                tolerance = 1e-4
+            elif compression == 1:  # 4 bytes
+                tolerance = 1e-6
+            elif compression == 2:  # 8 bytes
+                tolerance = 1e-7  # Still very precise but accounts for float arithmetic
+            else:  # compression == 3, 1 byte
+                tolerance = 2e-2
+
+            self.assertLess(
+                max_diff, tolerance, f"Compression {compression}: max_diff={max_diff} > {tolerance}"
+            )
+
+    def test_bcor_export_without_ldstore(self):
+        """Test that bcor export works even without ldstore for reading back."""
+        # Create small test matrix
+        n_vars = 5
+        test_matrix = np.eye(n_vars)
+
+        variant_info = pd.DataFrame(
+            {
+                "id": [f"var_{i}" for i in range(n_vars)],
+                "chrom": ["1"] * n_vars,
+                "pos": list(range(100, 100 + n_vars)),
+                "ref": ["A"] * n_vars,
+                "alt": ["T"] * n_vars,
+            }
+        )
+
+        output_file = os.path.join(self.temp_dir, "test_no_ldstore.bcor")
+
+        # Should not raise any errors
+        save_correlation_matrix(
+            corr_matrix=test_matrix,
+            output_file=output_file,
+            variant_info=variant_info,
+            output_format="bcor",
+            n_samples=1000,
+            compression=1,
+        )
+
+        # File should exist and have reasonable size
+        self.assertTrue(os.path.exists(output_file))
+        file_size = os.path.getsize(output_file)
+        self.assertGreater(file_size, 100)  # Should be at least a few hundred bytes
+
     # ==================== Covariate Loading Tests ====================
 
     def test_load_covariates_csv(self):
@@ -380,6 +545,182 @@ class TestIO(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             load_covariates(cov_file, cols_to_use=["PC1", "NonExistent"])
         self.assertIn("Requested covariate columns not found", str(cm.exception))
+
+    # ==================== Extended BCOR Format Tests ====================
+
+    def test_standard_bcor_with_unit_diagonal(self):
+        """Test that standard bcor is written when diagonal is all 1s."""
+        n_vars = 10
+        # Create correlation matrix with unit diagonal
+        corr_matrix = np.random.rand(n_vars, n_vars) * 0.8
+        corr_matrix = (corr_matrix + corr_matrix.T) / 2  # Make symmetric
+        np.fill_diagonal(corr_matrix, 1.0)  # Unit diagonal
+
+        variant_info = pd.DataFrame(
+            {
+                "id": [f"rs{i}" for i in range(n_vars)],
+                "chrom": ["1"] * n_vars,
+                "pos": list(range(1000, 1000 + n_vars * 100, 100)),
+                "ref": ["A"] * n_vars,
+                "alt": ["G"] * n_vars,
+            }
+        )
+
+        output_file = os.path.join(self.temp_dir, "standard.bcor")
+        save_bcor(corr_matrix, output_file, variant_info, n_samples=100, compression=1)
+
+        # Read back and verify
+        reader = BcorReader(output_file)
+        self.assertFalse(reader.is_extended, "Should be standard format")
+
+        # Check magic string
+        with open(output_file, "rb") as f:
+            magic = f.read(7)
+            self.assertEqual(magic, b"bcor1.1", "Should have standard magic string")
+
+        # Verify matrix
+        loaded = reader.read_corr()
+        np.testing.assert_array_almost_equal(corr_matrix, loaded, decimal=5)
+
+    def test_extended_bcor_with_non_unit_diagonal(self):
+        """Test that extended bcor is written when diagonal is not all 1s."""
+        n_vars = 10
+        # Create correlation matrix with non-unit diagonal (adjusted LD)
+        corr_matrix = np.random.rand(n_vars, n_vars) * 0.8
+        corr_matrix = (corr_matrix + corr_matrix.T) / 2  # Make symmetric
+        # Set non-unit diagonal values
+        diagonal_values = np.array([0.9, 1.0, 0.85, 1.0, 0.95, 1.0, 0.88, 1.0, 0.92, 1.0])
+        np.fill_diagonal(corr_matrix, diagonal_values)
+
+        variant_info = pd.DataFrame(
+            {
+                "id": [f"rs{i}" for i in range(n_vars)],
+                "chrom": ["1"] * n_vars,
+                "pos": list(range(1000, 1000 + n_vars * 100, 100)),
+                "ref": ["A"] * n_vars,
+                "alt": ["G"] * n_vars,
+            }
+        )
+
+        output_file = os.path.join(self.temp_dir, "extended.bcor")
+        save_bcor(corr_matrix, output_file, variant_info, n_samples=100, compression=1)
+
+        # Read back and verify
+        reader = BcorReader(output_file)
+        self.assertTrue(reader.is_extended, "Should be extended format")
+
+        # Check magic string
+        with open(output_file, "rb") as f:
+            magic = f.read(7)
+            self.assertEqual(magic, b"bcor1.x", "Should have extended magic string")
+
+        # Verify matrix including diagonal
+        loaded = reader.read_corr()
+        np.testing.assert_array_almost_equal(corr_matrix, loaded, decimal=5)
+
+        # Specifically check diagonal values
+        np.testing.assert_array_almost_equal(np.diag(loaded), diagonal_values, decimal=5)
+
+    def test_extended_bcor_different_compressions(self):
+        """Test extended bcor with different compression levels."""
+        n_vars = 8
+        # Create correlation matrix with non-unit diagonal
+        corr_matrix = np.eye(n_vars)
+        # Add some off-diagonal correlations
+        corr_matrix[0, 1] = corr_matrix[1, 0] = 0.8
+        corr_matrix[2, 3] = corr_matrix[3, 2] = 0.6
+        # Non-unit diagonal
+        diagonal_values = np.array([0.95, 0.90, 1.0, 0.85, 1.0, 0.92, 0.88, 1.0])
+        np.fill_diagonal(corr_matrix, diagonal_values)
+
+        variant_info = pd.DataFrame(
+            {
+                "id": [f"var{i}" for i in range(n_vars)],
+                "chrom": ["1"] * n_vars,
+                "pos": list(range(100, 100 + n_vars)),
+                "ref": ["A"] * n_vars,
+                "alt": ["T"] * n_vars,
+            }
+        )
+
+        for compression in [0, 1, 2, 3]:
+            output_file = os.path.join(self.temp_dir, f"extended_comp{compression}.bcor")
+
+            writer = BcorWriter(output_file, n_samples=100, compression=compression)
+            writer.write(corr_matrix, variant_info)
+
+            # Read back
+            reader = BcorReader(output_file)
+            self.assertTrue(reader.is_extended)
+            loaded = reader.read_corr()
+
+            # Check values with appropriate tolerance
+            if compression == 3:  # 1 byte
+                tolerance = 0.02
+            elif compression == 0:  # 2 bytes
+                tolerance = 1e-4
+            elif compression == 1:  # 4 bytes
+                tolerance = 1e-6
+            else:  # compression == 2, 8 bytes
+                tolerance = 1e-7
+
+            diff = np.abs(loaded - corr_matrix)
+            max_diff = np.max(diff)
+            self.assertLess(
+                max_diff, tolerance, f"Compression {compression}: max_diff={max_diff} > {tolerance}"
+            )
+
+    def test_extended_bcor_subset_reads(self):
+        """Test reading subsets from extended bcor files."""
+        n_vars = 20
+        # Create test matrix with non-unit diagonal
+        corr_matrix = np.random.rand(n_vars, n_vars) * 0.5 + 0.3
+        corr_matrix = (corr_matrix + corr_matrix.T) / 2
+        # Variable diagonal values
+        diagonal_values = 0.8 + 0.2 * np.random.rand(n_vars)
+        np.fill_diagonal(corr_matrix, diagonal_values)
+
+        output_file = os.path.join(self.temp_dir, "extended_subset.bcor")
+        save_bcor(corr_matrix, output_file, n_samples=100)
+
+        reader = BcorReader(output_file)
+        self.assertTrue(reader.is_extended)
+
+        # Test reading specific rows
+        rows = [0, 5, 10, 15]
+        subset = reader.read_corr(rows)
+        expected = corr_matrix[:, rows]
+        np.testing.assert_array_almost_equal(subset, expected, decimal=5)
+
+        # Test reading specific pairs
+        rows = [1, 3, 5]
+        cols = [2, 4, 6, 8]
+        subset = reader.read_corr(rows, cols)
+        expected = corr_matrix[np.ix_(rows, cols)]
+        np.testing.assert_array_almost_equal(subset, expected, decimal=5)
+
+        # Test diagonal element reads
+        for i in range(n_vars):
+            diag_val = reader.read_corr([i], [i])[0, 0]
+            self.assertAlmostEqual(diag_val, diagonal_values[i], places=5)
+
+    def test_bcor_backward_compatibility(self):
+        """Test that standard bcor files can still be read correctly."""
+        n_vars = 5
+        # Create standard correlation matrix (unit diagonal)
+        corr_matrix = np.eye(n_vars)
+        corr_matrix[0, 1] = corr_matrix[1, 0] = 0.5
+
+        output_file = os.path.join(self.temp_dir, "standard_compat.bcor")
+        save_bcor(corr_matrix, output_file, n_samples=100)
+
+        reader = BcorReader(output_file)
+        self.assertFalse(reader.is_extended)
+
+        # Should read correctly with diagonal as 1.0
+        loaded = reader.read_corr()
+        np.testing.assert_array_almost_equal(corr_matrix, loaded, decimal=6)
+        np.testing.assert_array_equal(np.diag(loaded), np.ones(n_vars))
 
 
 if __name__ == "__main__":
