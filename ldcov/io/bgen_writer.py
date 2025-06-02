@@ -194,12 +194,12 @@ def save_metadata(variant_info: pd.DataFrame, output_file: str) -> None:
     if has_params:
         logger.info("Metadata includes standardization parameters (means and norms)")
 
-    # Save as CSV
+    # Save as TSV (tab-separated values)
     is_compressed = output_file.endswith((".gz", ".bgz"))
     if is_compressed:
-        metadata.to_csv(output_file, index=False, compression="gzip")
+        metadata.to_csv(output_file, index=False, sep="\t", compression="gzip")
     else:
-        metadata.to_csv(output_file, index=False)
+        metadata.to_csv(output_file, index=False, sep="\t")
 
     logger.info(f"Metadata file written to {output_file}")
 

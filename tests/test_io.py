@@ -149,7 +149,7 @@ class TestIO(unittest.TestCase):
 
     def test_save_metadata(self):
         """Test metadata saving and loading."""
-        metadata_file = os.path.join(self.temp_dir, "test.metadata.csv.gz")
+        metadata_file = os.path.join(self.temp_dir, "test.metadata.tsv.gz")
 
         # Create test metadata DataFrame with required columns
         variant_info = pd.DataFrame(
@@ -170,7 +170,7 @@ class TestIO(unittest.TestCase):
         self.assertTrue(os.path.exists(metadata_file))
 
         # Load and verify
-        loaded_df = pd.read_csv(metadata_file)
+        loaded_df = pd.read_csv(metadata_file, sep="\t")
         self.assertIn("mean", loaded_df.columns)
         self.assertIn("norm", loaded_df.columns)
         np.testing.assert_array_almost_equal(loaded_df["mean"].values, [0.1, 0.2, 0.3])

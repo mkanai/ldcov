@@ -119,7 +119,7 @@ class TestCLI(unittest.TestCase):
 
         # Check outputs
         adj_file = f"{output_prefix}.adj.bgen"
-        metadata_file = f"{output_prefix}.adj.metadata.csv.gz"
+        metadata_file = f"{output_prefix}.adj.metadata.tsv.gz"
         self.assertTrue(os.path.exists(adj_file))
         self.assertTrue(os.path.exists(metadata_file))
         self.assertFalse(os.path.exists(f"{output_prefix}.ld"))
@@ -147,7 +147,7 @@ class TestCLI(unittest.TestCase):
         # Check both outputs exist
         self.assertTrue(os.path.exists(f"{output_prefix}.ld"))
         self.assertTrue(os.path.exists(f"{output_prefix}.adj.bgen"))
-        self.assertTrue(os.path.exists(f"{output_prefix}.adj.metadata.csv.gz"))
+        self.assertTrue(os.path.exists(f"{output_prefix}.adj.metadata.tsv.gz"))
 
     # ==================== Auto BGI Detection Tests ====================
 

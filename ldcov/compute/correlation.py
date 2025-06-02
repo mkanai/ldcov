@@ -153,7 +153,7 @@ def save_adjusted_genotypes(
     write_bgen(allelic_genotypes, variant_info, sample_ids, output_file, bit_depth=8)
 
     # Save metadata
-    metadata_file = f"{os.path.splitext(output_file)[0]}.metadata.csv.gz"
+    metadata_file = f"{os.path.splitext(output_file)[0]}.metadata.tsv.gz"
     logger.info(f"Saving metadata with standardization parameters to: {metadata_file}")
     variant_info_with_params = variant_info.copy()
     variant_info_with_params["mean"] = means

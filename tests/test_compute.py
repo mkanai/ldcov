@@ -466,11 +466,11 @@ class TestCompute(unittest.TestCase):
 
         # Validate outputs exist
         self.assertTrue(os.path.exists(adjusted_bgen))
-        metadata_file = f"{os.path.splitext(adjusted_bgen)[0]}.metadata.csv.gz"
+        metadata_file = f"{os.path.splitext(adjusted_bgen)[0]}.metadata.tsv.gz"
         self.assertTrue(os.path.exists(metadata_file))
 
         # Validate metadata content
-        metadata_df = pd.read_csv(metadata_file)
+        metadata_df = pd.read_csv(metadata_file, sep="\t")
         self.assertIn("mean", metadata_df.columns)
         self.assertIn("norm", metadata_df.columns)
         self.assertEqual(len(metadata_df), len(var_info))
