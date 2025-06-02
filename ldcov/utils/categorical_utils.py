@@ -43,6 +43,22 @@ def one_hot_encode_categorical(df: pd.DataFrame) -> pd.DataFrame:
         )
 
         for cat_col in categorical_columns:
+            # Check if the column has too many unique values (likely an identifier)
+            n_unique = encoded_df[cat_col].nunique()
+            n_total = len(encoded_df)
+
+            # Skip one-hot encoding if:
+            # 1. >80% of values are unique AND
+            # 2. There are more than 100 unique values (to avoid small datasets being affected)
+            if n_unique > 0.8 * n_total and n_unique > 100:
+                logger.warning(
+                    f"Skipping one-hot encoding for column '{cat_col}' with {n_unique} unique values "
+                    f"out of {n_total} total (likely an identifier column)"
+                )
+                # Remove the column entirely as it's probably an identifier
+                encoded_df = encoded_df.drop(columns=[cat_col])
+                continue
+
             # One-hot encode without dropping any column (we'll handle this manually)
             dummies = pd.get_dummies(encoded_df[cat_col], prefix=cat_col, drop_first=False)
 

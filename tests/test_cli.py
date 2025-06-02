@@ -57,10 +57,11 @@ class TestCLI(unittest.TestCase):
         covariates.to_csv(cls.cov_file, index=False)
 
         # Create covariate file with custom ID column
+        # Use FID as the matching column, and create a reasonable categorical IID column
         covariates_custom = pd.DataFrame(
             {
                 "FID": cls.sample_ids,
-                "IID": [f"ind_{sid}" for sid in cls.sample_ids],
+                "IID": ["patient" if i % 2 == 0 else "control" for i in range(n_samples)],
                 "PC1": np.random.normal(0, 1, n_samples),
                 "PC2": np.random.normal(0, 1, n_samples),
             }
@@ -444,6 +445,73 @@ class TestCLI(unittest.TestCase):
         main()
 
         self.assertTrue(os.path.exists(f"{output_prefix}.ld"))
+
+    def test_specific_covariate_columns(self):
+        """Test using specific columns as covariates."""
+        # Create covariate file with multiple columns
+        n_samples = len(self.sample_ids)
+        np.random.seed(42)
+        covariates_multi = pd.DataFrame(
+            {
+                "IID": self.sample_ids,
+                "PC1": np.random.normal(0, 1, n_samples),
+                "PC2": np.random.normal(0, 1, n_samples),
+                "PC3": np.random.normal(0, 1, n_samples),
+                "PC4": np.random.normal(0, 1, n_samples),
+                "batch": np.random.choice(["A", "B", "C"], n_samples),
+                "age": np.random.randint(20, 80, n_samples),
+            }
+        )
+        multi_cov_file = os.path.join(self.temp_dir, "multi_covariates.csv")
+        covariates_multi.to_csv(multi_cov_file, index=False)
+
+        output_prefix = os.path.join(self.temp_dir, "specific_cols")
+
+        # Use only PC1 and PC2 as covariates
+        sys.argv = [
+            "ldcov",
+            "--bgen",
+            str(self.bgen_file),
+            "--out",
+            output_prefix,
+            "--compute-ld",
+            "-c",
+            multi_cov_file,
+            "--covariate-cols",
+            "PC1",
+            "PC2",
+            "--bgi",
+            str(self.bgi_file),
+        ]
+
+        main()
+
+        # Should complete successfully
+        self.assertTrue(os.path.exists(f"{output_prefix}.ld"))
+
+    def test_invalid_covariate_columns(self):
+        """Test error when specifying non-existent covariate columns."""
+        output_prefix = os.path.join(self.temp_dir, "invalid_cols")
+
+        sys.argv = [
+            "ldcov",
+            "--bgen",
+            str(self.bgen_file),
+            "--out",
+            output_prefix,
+            "--compute-ld",
+            "-c",
+            self.cov_file,
+            "--covariate-cols",
+            "PC1",
+            "NonExistentColumn",
+            "--bgi",
+            str(self.bgi_file),
+        ]
+
+        # Should raise an error
+        with self.assertRaises(SystemExit):
+            main()
 
 
 if __name__ == "__main__":

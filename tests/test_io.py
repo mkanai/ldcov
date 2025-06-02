@@ -15,6 +15,7 @@ import os
 import tempfile
 import shutil
 from pathlib import Path
+
 # import gzip  # Used by pd.read_csv for compressed files
 
 from ldcov.io.bgen_reader import load_bgen, BgenFileReader
@@ -333,6 +334,52 @@ class TestIO(unittest.TestCase):
         # Original categorical columns removed
         self.assertNotIn("category", encoded.columns)
         self.assertNotIn("binary", encoded.columns)
+
+    def test_load_covariates_with_specific_columns(self):
+        """Test loading covariates with specific columns selected."""
+        # Create test CSV with multiple columns
+        cov_data = pd.DataFrame(
+            {
+                "IID": ["sample1", "sample2", "sample3"],
+                "PC1": [0.1, 0.2, 0.3],
+                "PC2": [-0.1, -0.2, -0.3],
+                "PC3": [0.5, 0.6, 0.7],
+                "batch": ["A", "B", "A"],
+                "age": [25, 45, 65],
+            }
+        )
+        cov_file = os.path.join(self.temp_dir, "test_multi_cov.csv")
+        cov_data.to_csv(cov_file, index=False)
+
+        # Load with specific columns
+        loaded_cov = load_covariates(cov_file, cols_to_use=["PC1", "PC3", "age"])
+
+        # Check that only requested columns are present (plus any one-hot encoded)
+        self.assertIn("PC1", loaded_cov.columns)
+        self.assertIn("PC3", loaded_cov.columns)
+        self.assertIn("age", loaded_cov.columns)
+        self.assertNotIn("PC2", loaded_cov.columns)
+        self.assertNotIn("batch", loaded_cov.columns)
+
+        # Check all samples are present
+        self.assertEqual(list(loaded_cov.index), ["sample1", "sample2", "sample3"])
+
+    def test_load_covariates_invalid_columns(self):
+        """Test error handling when requesting non-existent columns."""
+        cov_data = pd.DataFrame(
+            {
+                "IID": ["sample1", "sample2"],
+                "PC1": [0.1, 0.2],
+                "PC2": [-0.1, -0.2],
+            }
+        )
+        cov_file = os.path.join(self.temp_dir, "test_invalid_cols.csv")
+        cov_data.to_csv(cov_file, index=False)
+
+        # Request non-existent columns
+        with self.assertRaises(ValueError) as cm:
+            load_covariates(cov_file, cols_to_use=["PC1", "NonExistent"])
+        self.assertIn("Requested covariate columns not found", str(cm.exception))
 
 
 if __name__ == "__main__":

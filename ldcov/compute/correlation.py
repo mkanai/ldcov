@@ -32,6 +32,7 @@ def load_and_adjust_genotypes(
     sample_file: Optional[str] = None,
     z_file: Optional[str] = None,
     covariate_id_col: str = "IID",
+    covariate_cols: Optional[List[str]] = None,
 ) -> Tuple[np.ndarray, pd.DataFrame, List[str], np.ndarray, np.ndarray]:
     """
     Load genotypes, standardize them, and optionally adjust for covariates.
@@ -52,6 +53,8 @@ def load_and_adjust_genotypes(
         Path to .z file specifying which variants to load and their order
     covariate_id_col : str, optional
         Column name for sample IDs in covariate file (default: "IID")
+    covariate_cols : list of str, optional
+        Specific columns to use as covariates. If None, all columns except ID are used
 
     Returns:
     --------
@@ -92,7 +95,9 @@ def load_and_adjust_genotypes(
     # Apply covariate adjustment if provided
     if covariate_file:
         logger.info(f"Loading covariates from {covariate_file}")
-        covariates = load_covariates(covariate_file, sample_ids, id_col=covariate_id_col)
+        covariates = load_covariates(
+            covariate_file, sample_ids, id_col=covariate_id_col, cols_to_use=covariate_cols
+        )
 
         # Check if we need to filter genotypes to match covariate samples
         if len(covariates) < len(sample_ids):
@@ -145,7 +150,7 @@ def save_adjusted_genotypes(
     allelic_genotypes = correlation_preserving_transform(standardized_genotypes)
 
     logger.info(f"Writing adjusted genotypes to BGEN: {output_file}")
-    write_bgen(allelic_genotypes, variant_info, sample_ids, output_file, bit_depth=16)
+    write_bgen(allelic_genotypes, variant_info, sample_ids, output_file, bit_depth=8)
 
     # Save metadata
     metadata_file = f"{os.path.splitext(output_file)[0]}.metadata.csv.gz"

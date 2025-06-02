@@ -7,11 +7,9 @@ with support for converting between standardized and allelic scales.
 
 import numpy as np
 import pandas as pd
-from typing import Optional, List, Tuple, Dict, Any
+from typing import List
 import logging
 import os
-from pathlib import Path
-import gzip
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +20,47 @@ try:
 except ImportError:
     logger.warning("bgen module not available; install with 'pip install bgen'")
     BGEN_WRITER_AVAILABLE = False
+
+
+def _dosages_to_probabilities_vectorized(dosages: np.ndarray) -> np.ndarray:
+    """
+    Convert allelic dosages to probabilities using vectorized operations.
+
+    For diploid biallelic SNPs:
+    - If dosage is 0, P(AA)=1, P(AB)=0, P(BB)=0
+    - If dosage is 1, P(AA)=0, P(AB)=1, P(BB)=0
+    - If dosage is 2, P(AA)=0, P(AB)=0, P(BB)=1
+    - For intermediate values (e.g., 0.5), we linearly interpolate
+
+    Parameters:
+    -----------
+    dosages : numpy.ndarray
+        1D array of dosage values for a single variant
+
+    Returns:
+    --------
+    numpy.ndarray
+        2D array of shape (n_samples, 3) with probabilities [P(AA), P(AB), P(BB)]
+    """
+    n_samples = len(dosages)
+    probs = np.zeros((n_samples, 3), dtype=np.float64)
+
+    # Vectorized probability calculations
+    # P(AA): 1 - dosage for dosage <= 1, 0 for dosage > 1
+    probs[:, 0] = np.where(dosages <= 1, 1 - dosages, 0)
+
+    # P(AB): dosage for dosage <= 1, 2 - dosage for dosage > 1
+    probs[:, 1] = np.where(dosages <= 1, dosages, 2 - dosages)
+
+    # P(BB): 0 for dosage <= 1, dosage - 1 for dosage > 1
+    probs[:, 2] = np.where(dosages <= 1, 0, dosages - 1)
+
+    # Normalize probabilities to ensure they sum to 1 (handle numerical precision)
+    row_sums = probs.sum(axis=1, keepdims=True)
+    # Avoid division by zero
+    probs = np.divide(probs, row_sums, out=probs, where=row_sums != 0)
+
+    return probs
 
 
 def write_bgen(
@@ -66,75 +105,48 @@ def write_bgen(
         path=output_file, n_samples=n_samples, samples=sample_ids, compression=compression, layout=2
     ) as writer:
 
+        # Pre-extract variant info for efficient access
+        chroms = variant_info["chrom"].values
+        positions = variant_info["pos"].values
+        varids = variant_info["id"].values
+        rsids = variant_info.get("rsid", variant_info["id"]).values
+        refs = variant_info["ref"].values
+        alts = variant_info["alt"].values
+
         # Loop through variants and write to BGEN
         for i in range(n_variants):
-            var = variant_info.iloc[i]
-
-            # Get variant info
-            chrom = var["chrom"]
-            pos = var["pos"]
-            varid = var["id"]
-            rsid = var.get("rsid", varid)  # Use 'id' as rsid if not provided
-            alleles = [var["ref"], var["alt"]]
-
-            # Convert allelic dosages to probabilities
-            # For diploid biallelic, convert dosage to 3 probabilities: P(AA), P(AB), P(BB)
+            # Convert allelic dosages to probabilities - vectorized approach
             dosages = genotypes[:, i]
-
-            # Create empty probabilities array with the right shape
-            probs = np.zeros((n_samples, 3), dtype=np.float64)
-
-            # For diploid biallelic SNPs:
-            # If dosage is 0, P(AA)=1, P(AB)=0, P(BB)=0
-            # If dosage is 1, P(AA)=0, P(AB)=1, P(BB)=0
-            # If dosage is 2, P(AA)=0, P(AB)=0, P(BB)=1
-            # For intermediate values (e.g., 0.5), we linearly interpolate
-
-            # Calculate P(AA) = 1 - dosage/2 for dosage <= 1
-            # and P(AA) = 0 for dosage > 1
-            mask_AA = dosages <= 1
-            probs[mask_AA, 0] = 1 - dosages[mask_AA]
-
-            # Calculate P(AB)
-            # For dosage <= 1: P(AB) = dosage
-            # For dosage > 1: P(AB) = 2 - dosage
-            mask_AB_1 = dosages <= 1
-            mask_AB_2 = dosages > 1
-            probs[mask_AB_1, 1] = dosages[mask_AB_1]
-            probs[mask_AB_2, 1] = 2 - dosages[mask_AB_2]
-
-            # Calculate P(BB) = dosage - 1 for dosage > 1
-            # and P(BB) = 0 for dosage <= 1
-            mask_BB = dosages > 1
-            probs[mask_BB, 2] = dosages[mask_BB] - 1
-
-            # Normalize probabilities to ensure they sum to 1
-            row_sums = probs.sum(axis=1, keepdims=True)
-            probs = probs / row_sums
+            probs = _dosages_to_probabilities_vectorized(dosages)
 
             # Add the variant to the file
             writer.add_variant(
-                varid=varid,
-                rsid=rsid,
-                chrom=chrom,
-                pos=pos,
-                alleles=alleles,
+                varid=varids[i],
+                rsid=rsids[i],
+                chrom=chroms[i],
+                pos=positions[i],
+                alleles=[refs[i], alts[i]],
                 genotypes=probs,
                 ploidy=2,
                 phased=False,
                 bit_depth=bit_depth,
             )
 
-    # Always write sample file
+    # Always write sample file - optimized with pandas
     sample_file = f"{os.path.splitext(output_file)[0]}.sample"
+
+    # Create sample DataFrame for efficient writing
+    sample_df = pd.DataFrame(
+        {"ID_1": sample_ids, "ID_2": sample_ids, "missing": [0] * len(sample_ids)}
+    )
+
     with open(sample_file, "w") as f:
         # Write header
         f.write("ID_1 ID_2 missing\n")
         f.write("0 0 0\n")  # Format line
 
-        # Write sample IDs
-        for sample_id in sample_ids:
-            f.write(f"{sample_id} {sample_id} 0\n")
+    # Append sample data efficiently using pandas
+    sample_df.to_csv(sample_file, mode="a", sep=" ", header=False, index=False)
 
     logger.info(f"Sample file written to {sample_file}")
 
@@ -180,7 +192,7 @@ def save_metadata(variant_info: pd.DataFrame, output_file: str) -> None:
     # Check if standardization parameters are included
     has_params = "mean" in metadata.columns and "norm" in metadata.columns
     if has_params:
-        logger.info(f"Metadata includes standardization parameters (means and norms)")
+        logger.info("Metadata includes standardization parameters (means and norms)")
 
     # Save as CSV
     is_compressed = output_file.endswith((".gz", ".bgz"))

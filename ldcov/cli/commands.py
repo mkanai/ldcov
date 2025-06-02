@@ -45,6 +45,9 @@ Examples:
 
   # Only adjust genotypes (no LD computation)
   ldcov --bgen input.bgen --out output --export-adjusted-bgen -c covariates.txt
+
+  # Use specific columns as covariates
+  ldcov --bgen input.bgen --out output --compute-ld -c covariates.txt --covariate-cols PC1 PC2 PC3
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -78,6 +81,12 @@ Examples:
         "--covariate-id-col",
         default="IID",
         help="Column name for sample IDs in covariate file (default: IID)",
+    )
+
+    parser.add_argument(
+        "--covariate-cols",
+        nargs="+",
+        help="Specific columns to use as covariates (default: all columns except ID)",
     )
 
     parser.add_argument("--region", "-r", help='Genomic region in format "chr:start-end"')
@@ -164,6 +173,7 @@ def run_cli():
         sample_file=args.sample_file,
         z_file=args.z,
         covariate_id_col=args.covariate_id_col,
+        covariate_cols=args.covariate_cols,
     )
     standardized_genotypes, variant_info, sample_ids, means, norms = result
 

@@ -8,9 +8,7 @@ file formats, including text files and Excel files.
 import logging
 import os
 from typing import Optional, List
-import numpy as np
 import pandas as pd
-from pathlib import Path
 
 from ..utils.categorical_utils import one_hot_encode_categorical
 
@@ -18,10 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 def load_covariates(
-    file_path: str, sample_ids: Optional[List[str]] = None, id_col: str = "IID", **kwargs
+    file_path: str,
+    sample_ids: Optional[List[str]] = None,
+    id_col: str = "IID",
+    cols_to_use: Optional[List[str]] = None,
+    **kwargs,
 ) -> pd.DataFrame:
     """
-    Load covariate data from file and automatically convert categorical covariates to one-hot encoding.
+    Load covariate data from file and convert categorical covariates to one-hot encoding.
 
     Parameters:
     -----------
@@ -31,6 +33,8 @@ def load_covariates(
         Sample IDs to subset
     id_col : str, optional
         Column name for sample IDs (default: "IID")
+    cols_to_use : list of str, optional
+        Specific columns to use as covariates. If None, all columns except ID are used
     **kwargs : dict
         Additional keyword arguments for reading the file
 
@@ -83,6 +87,19 @@ def load_covariates(
             f"ID column '{id_col}' not found in covariate file. "
             f"Available columns: {list(covariates.columns)}"
         )
+
+    # Filter to specific columns if requested
+    if cols_to_use is not None:
+        logger.info(f"Filtering to specific covariate columns: {cols_to_use}")
+        # Check that all requested columns exist
+        missing_cols = [col for col in cols_to_use if col not in covariates.columns]
+        if missing_cols:
+            raise ValueError(
+                f"Requested covariate columns not found: {missing_cols}. "
+                f"Available columns: {list(covariates.columns)}"
+            )
+        # Keep only the requested columns
+        covariates = covariates[cols_to_use]
 
     # Subset to specified sample IDs if provided
     if sample_ids is not None:

@@ -27,6 +27,7 @@ from ldcov.compute.covariate import (
     regress_out_covariates,
 )
 from ldcov.io.bgen_reader import load_bgen
+
 # from ldcov.io.covariate_loader import load_covariates  # Used in load_and_adjust_genotypes
 
 
@@ -360,7 +361,7 @@ class TestCompute(unittest.TestCase):
 
         # Check overall similarity
         self.assertLess(avg_diff, tol, f"Average difference {avg_diff:.4f} exceeds tolerance {tol}")
-        
+
         # Additional checks
         self.assertTrue(np.allclose(np.diag(ldcov_ld), 1.0), "LD matrix diagonal should be 1.0")
         self.assertTrue(np.allclose(ldcov_ld, ldcov_ld.T), "LD matrix should be symmetric")
@@ -370,11 +371,13 @@ class TestCompute(unittest.TestCase):
         # Create covariates
         n_samples = len(self.sample_ids)
         np.random.seed(42)  # For reproducibility
-        covariates = pd.DataFrame({
-            "IID": self.sample_ids,
-            "PC1": np.random.normal(0, 1, n_samples),
-            "PC2": np.random.normal(0, 1, n_samples),
-        })
+        covariates = pd.DataFrame(
+            {
+                "IID": self.sample_ids,
+                "PC1": np.random.normal(0, 1, n_samples),
+                "PC2": np.random.normal(0, 1, n_samples),
+            }
+        )
         cov_file = os.path.join(self.temp_dir, "test_correlation_preservation.csv")
         covariates.to_csv(cov_file, index=False)
 
@@ -411,11 +414,12 @@ class TestCompute(unittest.TestCase):
 
         # Calculate correlation between LD matrices
         ld_correlation = np.corrcoef(original_flat, reloaded_flat)[0, 1]
-        
+
         # Should be very highly correlated (>0.99 threshold)
         self.assertGreater(
-            ld_correlation, 0.99,
-            f"LD matrices not highly correlated (correlation: {ld_correlation:.6f})"
+            ld_correlation,
+            0.99,
+            f"LD matrices not highly correlated (correlation: {ld_correlation:.6f})",
         )
 
         # Mean absolute difference should be small (<0.1 threshold)
@@ -426,11 +430,13 @@ class TestCompute(unittest.TestCase):
         """Test complete modular workflow with intermediate validations."""
         # Create test covariates
         n_samples = len(self.sample_ids)
-        covariates = pd.DataFrame({
-            "IID": self.sample_ids,
-            "PC1": np.random.normal(0, 1, n_samples),
-            "PC2": np.random.normal(0, 1, n_samples),
-        })
+        covariates = pd.DataFrame(
+            {
+                "IID": self.sample_ids,
+                "PC1": np.random.normal(0, 1, n_samples),
+                "PC2": np.random.normal(0, 1, n_samples),
+            }
+        )
         cov_file = os.path.join(self.temp_dir, "workflow_test.csv")
         covariates.to_csv(cov_file, index=False)
 
@@ -457,12 +463,12 @@ class TestCompute(unittest.TestCase):
 
         # Step 2: Save adjusted genotypes
         save_adjusted_genotypes(std_geno, var_info, sample_ids, adjusted_bgen, means, norms)
-        
+
         # Validate outputs exist
         self.assertTrue(os.path.exists(adjusted_bgen))
         metadata_file = f"{os.path.splitext(adjusted_bgen)[0]}.metadata.csv.gz"
         self.assertTrue(os.path.exists(metadata_file))
-        
+
         # Validate metadata content
         metadata_df = pd.read_csv(metadata_file)
         self.assertIn("mean", metadata_df.columns)
@@ -471,21 +477,21 @@ class TestCompute(unittest.TestCase):
 
         # Step 3: Compute LD
         compute_ld_from_standardized(std_geno, var_info, output_ld, output_format="matrix")
-        
+
         # Validate LD output
         self.assertTrue(os.path.exists(output_ld))
-        
+
         # Load and validate LD matrix
         ld_matrix = self._read_numeric_matrix(output_ld)
         self.assertEqual(ld_matrix.shape[0], ld_matrix.shape[1])
-        
+
         # Check diagonal is close to 1.0 (allowing for numerical precision)
         diag_values = np.diag(ld_matrix)
         min_diag = np.min(diag_values)
         max_diag = np.max(diag_values)
         self.assertGreater(min_diag, 0.998, f"Diagonal values too low (min: {min_diag:.6f})")
         self.assertLess(max_diag, 1.002, f"Diagonal values too high (max: {max_diag:.6f})")
-        
+
         self.assertTrue(np.allclose(ld_matrix, ld_matrix.T), "LD matrix should be symmetric")
 
     @staticmethod
@@ -505,7 +511,7 @@ class TestCompute(unittest.TestCase):
     def _read_numeric_matrix(self, file_path):
         """Helper function to read a numeric matrix from a text file."""
         import gzip
-        
+
         # Determine if the file is compressed
         is_compressed = file_path.endswith((".gz", ".bgz"))
         open_func = gzip.open if is_compressed else open
