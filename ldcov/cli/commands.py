@@ -98,7 +98,7 @@ Examples:
         help="Output format for LD matrix (default: matrix)",
     )
 
-    parser.add_argument("--sample-file", help="Path to sample file (optional)")
+    parser.add_argument("--sample", help="Path to sample file (.sample, optional)")
 
     parser.add_argument(
         "--z",
@@ -170,7 +170,7 @@ def run_cli():
         covariate_file=args.covariates,
         region=args.region,
         index_file=bgi_file,
-        sample_file=args.sample_file,
+        sample_file=args.sample,
         z_file=args.z,
         covariate_id_col=args.covariate_id_col,
         covariate_cols=args.covariate_cols,
