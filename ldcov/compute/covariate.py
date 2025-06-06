@@ -44,6 +44,13 @@ def standardize_genotypes(
         genotypes.dtype, np.floating
     ), "Genotypes must be floating point for standardization"
 
+    # Check for NaN values in genotypes
+    if np.any(np.isnan(genotypes)):
+        raise ValueError(
+            "Genotype matrix contains NaN values. "
+            "This may indicate issues with the input BGEN file or variant filtering."
+        )
+
     # Calculate means for centering
     means = np.mean(genotypes, axis=0) if center else np.zeros(genotypes.shape[1])
 
@@ -123,10 +130,18 @@ def regress_out_covariates(
     # Add intercept
     covariates["intercept"] = 1.0
 
-    # Convert to numpy array
-    X = covariates.to_numpy()
+    # Convert to numpy array, ensuring float type
+    X = covariates.to_numpy(dtype=np.float64)
 
     logger.info(f"Performing FWL projection with {X.shape[1]} covariates (including intercept)")
+
+    # Check if we have too few samples relative to covariates
+    n_samples, n_covariates = X.shape
+    if n_samples <= n_covariates:
+        raise ValueError(
+            f"Number of samples ({n_samples}) is less than or equal to number of covariates ({n_covariates}). "
+            "This will result in a rank-deficient system. Please use fewer covariates."
+        )
 
     # Perform FWL projection on standardized genotypes
     # This modifies standardized_genotypes if inplace=True
@@ -154,21 +169,97 @@ def _apply_fwl_projection(G: np.ndarray, X: np.ndarray) -> np.ndarray:
     Raises:
     -------
     ValueError
-        If G is empty (G.size == 0)
+        If QR decomposition fails
     """
-    # Check if G is empty - raise error if so
-    if G.size == 0:
-        raise ValueError("Cannot apply FWL projection to empty genotype matrix")
+    try:
+        # Check for rank deficiency
+        rank = np.linalg.matrix_rank(X)
+        if rank < X.shape[1]:
+            logger.warning(
+                f"Covariate matrix is rank deficient (rank {rank} < {X.shape[1]} columns). "
+                "Attempting to handle multicollinearity."
+            )
 
-    # Calculate projection matrix
-    # Following the FWL approach:
-    # P_X = X(X'X)^(-1)X'
-    # Residual: (I - P_X)G
+            # Try to identify and remove linearly dependent columns
+            _, R = np.linalg.qr(X)
+            tol = 1e-10
+            independent_cols = np.abs(np.diag(R)) > tol
 
-    # Using a more numerically stable approach with QR decomposition
-    Q, R = np.linalg.qr(X)
-    # Compute the projection onto the orthogonal complement of X
-    # This modifies G in-place
-    G -= Q @ (Q.T @ G)
+            if np.sum(independent_cols) == 0:
+                raise ValueError("All covariate columns appear to be linearly dependent")
 
-    return G
+            # Use only independent columns
+            X_reduced = X[:, independent_cols]
+            logger.info(f"Using {np.sum(independent_cols)} independent columns out of {X.shape[1]}")
+
+            # Perform QR decomposition on reduced matrix
+            Q, R = np.linalg.qr(X_reduced)
+        else:
+            # Perform standard QR decomposition
+            Q, R = np.linalg.qr(X)
+
+        # Check for numerical issues in R
+        if np.any(np.isnan(R)) or np.any(np.isinf(R)):
+            raise ValueError("QR decomposition produced NaN or Inf values")
+
+        # Compute the projection onto the orthogonal complement of X
+        projection = Q @ (Q.T @ G)
+
+        # Check for NaN in projection before modifying G
+        if np.any(np.isnan(projection)):
+            raise ValueError("Projection calculation produced NaN values")
+
+        # This modifies G in-place
+        G -= projection
+
+        # Check if all values became zero (or near zero)
+        if np.allclose(G, 0, atol=1e-10):
+            logger.warning(
+                "FWL projection resulted in all near-zero values. "
+                "This may indicate perfect collinearity between genotypes and covariates."
+            )
+
+        return G
+
+    except Exception as e:
+        logger.error(f"FWL projection failed: {str(e)}")
+        logger.warning("Falling back to pseudoinverse method")
+
+        try:
+            # Fallback: Use pseudoinverse (Moore-Penrose) which is more robust
+            # P_X = X @ pinv(X'X) @ X'
+            # Residual: (I - P_X)G
+
+            # Compute pseudoinverse
+            XtX = X.T @ X
+            XtX_pinv = np.linalg.pinv(XtX, rcond=1e-10)
+
+            # Check for numerical issues
+            if np.any(np.isnan(XtX_pinv)) or np.any(np.isinf(XtX_pinv)):
+                raise ValueError("Pseudoinverse calculation failed")
+
+            # Compute projection matrix
+            P_X = X @ XtX_pinv @ X.T
+
+            # Apply projection
+            G -= P_X @ G
+
+            # Final check
+            if np.any(np.isnan(G)):
+                raise ValueError("Pseudoinverse method also resulted in NaN values")
+
+            logger.info("Successfully applied FWL projection using pseudoinverse method")
+            return G
+
+        except Exception as fallback_error:
+            logger.error(f"Fallback method also failed: {str(fallback_error)}")
+            logger.error(
+                "Unable to regress out covariates. Consider checking for: "
+                "1) Perfect collinearity between covariates, "
+                "2) Covariates that perfectly explain genotype variation, "
+                "3) Numerical precision issues with input data"
+            )
+            raise ValueError(
+                "Both QR decomposition and pseudoinverse methods failed. "
+                "Cannot regress out covariates from genotypes."
+            )

@@ -92,7 +92,26 @@ class TestIO(unittest.TestCase):
 
     def test_load_bgen_with_region(self):
         """Test BGEN loading with region filter."""
-        region = "01:1000000-2000000"
+        # First load all data to find a valid region
+        all_genotypes, all_variant_info, _ = load_bgen(
+            file_path=str(self.bgen_file),
+            index_path=str(self.bgi_file),
+            sample_path=str(self.sample_file),
+        )
+
+        # Skip test if no variants
+        if len(all_variant_info) == 0:
+            self.skipTest("No variants in test BGEN file")
+
+        # Use the chromosome and position range from actual data
+        first_chrom = all_variant_info["chrom"].iloc[0]
+        min_pos = all_variant_info["pos"].min()
+        max_pos = all_variant_info["pos"].max()
+        mid_pos = (min_pos + max_pos) // 2
+
+        # Create a region that contains some variants
+        region = f"{first_chrom}:{min_pos}-{mid_pos}"
+
         genotypes, variant_info, sample_ids = load_bgen(
             file_path=str(self.bgen_file),
             index_path=str(self.bgi_file),
@@ -100,11 +119,14 @@ class TestIO(unittest.TestCase):
             region=region,
         )
 
+        # Check that we got some variants
+        self.assertGreater(len(variant_info), 0)
+
         # Check that all variants are within the region
         for _, variant in variant_info.iterrows():
-            self.assertEqual(variant["chrom"], "01")
-            self.assertGreaterEqual(variant["pos"], 1000000)
-            self.assertLessEqual(variant["pos"], 2000000)
+            self.assertEqual(variant["chrom"], first_chrom)
+            self.assertGreaterEqual(variant["pos"], min_pos)
+            self.assertLessEqual(variant["pos"], mid_pos)
 
     def test_load_bgen_without_index(self):
         """Test BGEN loading without index file."""
@@ -115,6 +137,21 @@ class TestIO(unittest.TestCase):
         # Should still load successfully
         self.assertGreater(genotypes.shape[0], 0)
         self.assertGreater(genotypes.shape[1], 0)
+
+    def test_load_bgen_empty_region_error(self):
+        """Test that loading an empty region raises an error."""
+        # Use a region that definitely doesn't contain any variants
+        empty_region = "99:1-100"
+
+        with self.assertRaises(ValueError) as context:
+            load_bgen(
+                file_path=str(self.bgen_file),
+                index_path=str(self.bgi_file),
+                sample_path=str(self.sample_file),
+                region=empty_region,
+            )
+
+        self.assertIn("No variants were loaded", str(context.exception))
 
     # ==================== BGEN Writer Tests ====================
 

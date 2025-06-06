@@ -369,6 +369,16 @@ def load_bgen(
             # Load all variants and dosages in one efficient pass
             dosages, variant_info = bgen_reader.load_all_variants_and_dosages(dtype)
 
+        # Check if we loaded any variants
+        if dosages.size == 0 or dosages.shape[1] == 0:
+            raise ValueError(
+                "No variants were loaded from the BGEN file. "
+                "This may be due to: "
+                "1) An empty genomic region, "
+                "2) No variants passing the filter criteria, "
+                "3) Issues with the BGEN file format"
+            )
+
         return dosages, variant_info, bgen_reader.sample_ids
 
     except Exception as e:

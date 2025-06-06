@@ -76,7 +76,6 @@ class BcorReader:
     # Compression to bytes mapping
     _COMPRESSION_BYTES = [2, 4, 8, 1]
 
-
     def __init__(self, filename: str, use_mmap: bool = None):
         """
         Initialize bcor reader.

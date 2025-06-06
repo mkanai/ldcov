@@ -72,7 +72,6 @@ class BcorWriter:
     # Compression to bytes mapping
     _COMPRESSION_BYTES = [2, 4, 8, 1]
 
-
     def __init__(self, output_file: str, n_samples: int = 1000, compression: int = 1):
         """
         Initialize bcor writer.
@@ -321,7 +320,6 @@ class BcorWriter:
             int_val = 0
 
         return int_val
-
 
 
 def save_bcor(
