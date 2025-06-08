@@ -82,12 +82,51 @@ def load_and_adjust_genotypes(
         z_df = read_z_file(z_file)
         variant_filter = create_variant_filter_from_z(z_df)
 
+    # Determine which samples to load based on covariate/projection data
+    samples_to_load = None
+
+    if projection_matrix_file:
+        # If using projection matrix, we need to load only samples in the projection
+        logger.info(f"Pre-loading projection matrix to determine samples")
+        from .projection import load_projection_matrix
+
+        projection_data = load_projection_matrix(projection_matrix_file)
+        samples_to_load = projection_data.sample_ids
+        logger.info(f"Will load {len(samples_to_load)} samples from projection matrix")
+
+    elif covariate_file:
+        # If using covariates, we can pre-load the sample IDs to filter early
+        logger.info(f"Pre-loading covariate sample IDs for early filtering")
+        # Quick load just to get sample IDs
+        import pandas as pd
+
+        # Try to read with automatic delimiter detection
+        try:
+            cov_df = pd.read_csv(
+                covariate_file,
+                sep=None,
+                engine="python",
+                usecols=[covariate_id_col],
+                dtype={covariate_id_col: str},
+            )
+        except Exception:
+            # Fallback to reading all columns if usecols fails
+            cov_df = pd.read_csv(covariate_file, sep=None, engine="python", dtype=str)
+            if covariate_id_col not in cov_df.columns:
+                raise ValueError(f"Column '{covariate_id_col}' not found in covariate file")
+            cov_df = cov_df[[covariate_id_col]]
+
+        samples_to_load = cov_df[covariate_id_col].astype(str).tolist()
+        logger.info(f"Will load {len(samples_to_load)} samples from covariate file")
+
+    # Load genotypes with sample filtering if applicable
     genotypes, variant_info, sample_ids = load_bgen(
         file_path=genotype_file,
         index_path=index_file,
         sample_path=sample_file,
         region=region,
         variant_filter=variant_filter,
+        sample_ids=samples_to_load,
     )
 
     # Standardize genotypes
@@ -99,44 +138,35 @@ def load_and_adjust_genotypes(
     # Apply covariate adjustment if provided
     if projection_matrix_file:
         # Use pre-computed projection matrix
-        logger.info(f"Loading pre-computed projection matrix from {projection_matrix_file}")
-        from .projection import load_projection_matrix, validate_projection_compatibility
+        # Note: samples were already filtered during loading
+        logger.info("Using pre-computed projection matrix for adjustment")
 
-        projection_data = load_projection_matrix(projection_matrix_file)
+        # Projection data was already loaded above, but we load it again
+        # to avoid variable scope issues
+        if "projection_data" not in locals():
+            from .projection import load_projection_matrix
 
-        # Validate and align samples
-        Q_subset, sample_indices = validate_projection_compatibility(projection_data, sample_ids)
-
-        # If projection matrix has fewer samples, filter genotypes
-        if len(sample_indices) < len(sample_ids):
-            logger.info(
-                f"Filtering genotypes to {len(sample_indices)} samples in projection matrix"
-            )
-            standardized_genotypes = standardized_genotypes[sample_indices, :]
-            sample_ids = [sample_ids[i] for i in sample_indices]
+            projection_data = load_projection_matrix(projection_matrix_file)
 
         logger.info("Adjusting genotypes using pre-computed projection matrix")
         standardized_genotypes = regress_out_covariates(
-            standardized_genotypes, projection_matrix_Q=Q_subset, inplace=True
+            standardized_genotypes, projection_matrix_Q=projection_data.Q, inplace=True
         )
 
     elif covariate_file:
         # Original workflow: load covariates and compute projection
-        logger.info(f"Loading covariates from {covariate_file}")
+        # Note: samples were already filtered during loading if covariate file was provided
+        logger.info(f"Loading full covariates from {covariate_file}")
         covariates = load_covariates(
             covariate_file, sample_ids, id_col=covariate_id_col, cols_to_use=covariate_cols
         )
 
-        # Check if we need to filter genotypes to match covariate samples
-        if len(covariates) < len(sample_ids):
-            logger.info(f"Filtering genotypes to {len(covariates)} samples with covariate data")
-            # Get indices of samples that have covariate data
-            covariate_sample_ids = covariates.index.tolist()
-            sample_indices = [i for i, sid in enumerate(sample_ids) if sid in covariate_sample_ids]
-
-            # Filter genotypes and sample IDs
-            standardized_genotypes = standardized_genotypes[sample_indices, :]
-            sample_ids = [sample_ids[i] for i in sample_indices]
+        # Since we already filtered during loading, all samples should match
+        if len(covariates) != len(sample_ids):
+            logger.warning(
+                f"Unexpected sample mismatch after pre-filtering: "
+                f"{len(covariates)} covariate samples vs {len(sample_ids)} genotype samples"
+            )
 
         logger.info("Adjusting genotypes for covariates")
         standardized_genotypes = regress_out_covariates(
