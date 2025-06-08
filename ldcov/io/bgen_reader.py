@@ -243,10 +243,12 @@ class BgenFileReader:
             in the returned dosage matrix
         """
         if sample_indices is not None:
-            logger.info(f"Loading all variants and dosages for {len(sample_indices)} samples")
+            logger.info(
+                f"Loading variants with {len(sample_indices)} samples (filtered from {self.n_samples})"
+            )
             n_samples_out = len(sample_indices)
         else:
-            logger.info("Loading all variants and dosages in one pass")
+            logger.info(f"Loading all variants with {self.n_samples} samples")
             n_samples_out = self.n_samples
 
         variant_info_list = []
@@ -404,7 +406,7 @@ def load_bgen(
         filtered_sample_ids = bgen_reader.sample_ids
 
         if sample_ids is not None:
-            logger.info(f"Filtering to {len(sample_ids)} requested samples")
+            logger.info(f"Filtering BGEN to {len(sample_ids)} requested samples")
             sample_indices, filtered_sample_ids = bgen_reader.get_sample_indices(sample_ids)
 
             if not sample_indices:
@@ -413,7 +415,9 @@ def load_bgen(
                     "Please check that sample IDs match between files."
                 )
 
-            logger.info(f"Found {len(sample_indices)} samples in BGEN file")
+            # Only log if there's a difference between requested and found
+            if len(sample_indices) < len(sample_ids):
+                logger.info(f"Found {len(sample_indices)} of {len(sample_ids)} requested samples")
 
         if variant_filter is not None:
             # Load variants specified in .z file
