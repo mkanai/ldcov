@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 def load_and_adjust_genotypes(
     genotype_file: str,
     covariate_file: Optional[str] = None,
+    projection_matrix_file: Optional[str] = None,
     region: Optional[str] = None,
     index_file: Optional[str] = None,
     sample_file: Optional[str] = None,
@@ -42,7 +43,10 @@ def load_and_adjust_genotypes(
     genotype_file : str
         Path to BGEN genotype file
     covariate_file : str, optional
-        Path to covariate file for adjustment
+        Path to covariate file for adjustment. Ignored if projection_matrix_file is provided.
+    projection_matrix_file : str, optional
+        Path to pre-computed projection matrix file (.proj.npz). If provided, uses this
+        instead of computing from covariates.
     region : str, optional
         Genomic region in format "chr:start-end"
     index_file : str, optional
@@ -93,7 +97,31 @@ def load_and_adjust_genotypes(
     )
 
     # Apply covariate adjustment if provided
-    if covariate_file:
+    if projection_matrix_file:
+        # Use pre-computed projection matrix
+        logger.info(f"Loading pre-computed projection matrix from {projection_matrix_file}")
+        from .projection import load_projection_matrix, validate_projection_compatibility
+
+        projection_data = load_projection_matrix(projection_matrix_file)
+
+        # Validate and align samples
+        Q_subset, sample_indices = validate_projection_compatibility(projection_data, sample_ids)
+
+        # If projection matrix has fewer samples, filter genotypes
+        if len(sample_indices) < len(sample_ids):
+            logger.info(
+                f"Filtering genotypes to {len(sample_indices)} samples in projection matrix"
+            )
+            standardized_genotypes = standardized_genotypes[sample_indices, :]
+            sample_ids = [sample_ids[i] for i in sample_indices]
+
+        logger.info("Adjusting genotypes using pre-computed projection matrix")
+        standardized_genotypes = regress_out_covariates(
+            standardized_genotypes, projection_matrix_Q=Q_subset, inplace=True
+        )
+
+    elif covariate_file:
+        # Original workflow: load covariates and compute projection
         logger.info(f"Loading covariates from {covariate_file}")
         covariates = load_covariates(
             covariate_file, sample_ids, id_col=covariate_id_col, cols_to_use=covariate_cols
@@ -112,7 +140,7 @@ def load_and_adjust_genotypes(
 
         logger.info("Adjusting genotypes for covariates")
         standardized_genotypes = regress_out_covariates(
-            standardized_genotypes, covariates, inplace=True
+            standardized_genotypes, covariates=covariates, inplace=True
         )
 
     return standardized_genotypes, variant_info, sample_ids, means, norms

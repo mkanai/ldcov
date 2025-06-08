@@ -6,6 +6,7 @@ A Python package for efficient linkage disequilibrium (LD) calculation with cova
 
 - **BGEN format support**: Efficient reading and writing of BGEN v1.2/v1.3 files
 - **Covariate adjustment**: Remove confounding effects using Frisch-Waugh-Lovell (FWL) projection
+- **Pre-computed projection matrices**: Compute QR decomposition once, reuse across multiple analyses
 - **Flexible computation modes**: Compute LD only, save adjusted genotypes only, or both
 - **Z-file support**: Filter and order variants based on external variant lists
 - **Correlation-preserving transformation**: Save adjusted genotypes while maintaining LD structure
@@ -54,12 +55,35 @@ ldcov --bgen input.bgen --bgi input.bgen.bgi --out output --compute-ld
 ldcov --bgen input.bgen --out output --compute-ld --export-adjusted-bgen -c gs://bucket/covariates.txt
 ```
 
+### Pre-computed Projection Matrices (New!)
+
+For large-scale analyses, you can pre-compute the covariate projection matrix once and reuse it:
+
+```bash
+# Step 1: Pre-compute projection matrix from covariates
+ldcov --precompute-projection -c covariates.txt --sample data.sample --out myproject
+
+# Step 2: Use pre-computed projection for LD computation
+ldcov --bgen chr1.bgen --projection-matrix myproject.proj.npz --compute-ld --out chr1_results
+ldcov --bgen chr2.bgen --projection-matrix myproject.proj.npz --compute-ld --out chr2_results
+# ... process all chromosomes with the same projection matrix
+
+# Alternative: Compute LD and save projection matrix for future use
+ldcov --bgen input.bgen -c covariates.txt --compute-ld --save-projection --out results
+```
+
+This is particularly useful for:
+- Processing multiple genomic regions with the same covariates
+- Distributed computing across a cluster
+- Iterative analyses with different variant filters
+
 #### Output Files
 
 Based on the flags used, ldcov will create:
 
 - `--compute-ld`: Creates `{out}.ld` (matrix format) or `{out}.ld.gz` (long format)
 - `--export-adjusted-bgen`: Creates `{out}.adj.bgen` and `{out}.adj.metadata.csv.gz`
+- `--precompute-projection` or `--save-projection`: Creates `{out}.proj.npz`
 
 ### Python API
 
@@ -97,6 +121,23 @@ ldcov.save_adjusted_genotypes(
 genotypes, variant_info, sample_ids = ldcov.load_bgen("data.bgen")
 standardized, means, norms = ldcov.standardize_genotypes(genotypes)
 adjusted = ldcov.regress_out_covariates(standardized, covariates)
+
+# Pre-computed projection matrix workflow
+from ldcov.compute.projection import compute_projection_matrix, save_projection_matrix, load_projection_matrix
+
+# Pre-compute projection
+projection_data = compute_projection_matrix(
+    covariate_file="covariates.txt",
+    sample_ids=sample_ids
+)
+save_projection_matrix(projection_data, "myproject.proj.npz")
+
+# Later: Load and use projection
+projection_data = load_projection_matrix("myproject.proj.npz")
+adjusted = ldcov.regress_out_covariates(
+    standardized_genotypes,
+    projection_matrix_Q=projection_data.Q
+)
 ```
 
 ## Covariate File Format
@@ -143,8 +184,11 @@ This ensures that the dot product of standardized genotypes equals the Pearson c
 The package uses Frisch-Waugh-Lovell (FWL) projection to remove covariate effects:
 
 1. Standardize genotypes
-2. Project out covariates using ordinary least squares
-3. The residuals represent genotypes adjusted for covariate effects
+2. Compute QR decomposition of the covariate matrix (with intercept)
+3. Project out covariates using the orthogonal projection matrix Q
+4. The residuals represent genotypes adjusted for covariate effects
+
+For efficiency, the QR decomposition can be pre-computed once and reused across multiple analyses, as the projection matrix Q depends only on the covariates, not the genotypes.
 
 ### Correlation-Preserving Transformation
 

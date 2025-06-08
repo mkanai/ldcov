@@ -80,7 +80,8 @@ def standardize_genotypes(
 
 def regress_out_covariates(
     standardized_genotypes: np.ndarray,
-    covariates: Union[np.ndarray, pd.DataFrame],
+    covariates: Union[np.ndarray, pd.DataFrame, None] = None,
+    projection_matrix_Q: Optional[np.ndarray] = None,
     inplace: bool = True,
 ) -> np.ndarray:
     """
@@ -91,9 +92,12 @@ def regress_out_covariates(
     standardized_genotypes : numpy.ndarray
         Standardized genotype matrix (samples x variants). Genotypes should already be
         standardized (centered and scaled) before calling this function.
-    covariates : numpy.ndarray or pandas.DataFrame
+    covariates : numpy.ndarray, pandas.DataFrame, or None
         Covariate matrix (samples x covariates). Categorical covariates should already be
-        one-hot encoded by the load_covariates function.
+        one-hot encoded by the load_covariates function. Required if projection_matrix_Q is None.
+    projection_matrix_Q : numpy.ndarray, optional
+        Pre-computed orthogonal projection matrix Q from QR decomposition. If provided,
+        covariates parameter is ignored.
     inplace : bool, optional
         Whether to modify the input genotypes in place (default: True). This saves memory but
         modifies the original array.
@@ -106,48 +110,114 @@ def regress_out_covariates(
     Raises:
     -------
     ValueError
+        If neither covariates nor projection_matrix_Q is provided.
         If pandas DataFrame contains categorical columns.
     """
+    # Validate inputs
+    if projection_matrix_Q is None and covariates is None:
+        raise ValueError("Either covariates or projection_matrix_Q must be provided")
+
     # Input genotypes should already be standardized
     # Create a copy if not inplace
     if not inplace:
         standardized_genotypes = standardized_genotypes.copy()
 
-    # Convert covariates to DataFrame if numpy array
-    if isinstance(covariates, np.ndarray):
-        covariates = pd.DataFrame(covariates)
-
-    # Check if any covariates are still categorical and raise error
-    for col in covariates.columns:
-        if covariates[col].dtype == "object" or isinstance(
-            covariates[col].dtype, pd.CategoricalDtype
-        ):
-            raise ValueError(
-                f"Column '{col}' is categorical. All categorical covariates should be "
-                f"one-hot encoded in the load_covariates function before calling regress_out_covariates."
-            )
-
-    # Add intercept
-    covariates["intercept"] = 1.0
-
-    # Convert to numpy array, ensuring float type
-    X = covariates.to_numpy(dtype=np.float64)
-
-    logger.info(f"Performing FWL projection with {X.shape[1]} covariates (including intercept)")
-
-    # Check if we have too few samples relative to covariates
-    n_samples, n_covariates = X.shape
-    if n_samples <= n_covariates:
-        raise ValueError(
-            f"Number of samples ({n_samples}) is less than or equal to number of covariates ({n_covariates}). "
-            "This will result in a rank-deficient system. Please use fewer covariates."
+    # Use pre-computed Q if provided
+    if projection_matrix_Q is not None:
+        logger.info(
+            f"Using pre-computed projection matrix Q with shape {projection_matrix_Q.shape}"
         )
 
-    # Perform FWL projection on standardized genotypes
-    # This modifies standardized_genotypes if inplace=True
-    adjusted_standardized_genotypes = _apply_fwl_projection(standardized_genotypes, X)
+        # Validate dimensions
+        if projection_matrix_Q.shape[0] != standardized_genotypes.shape[0]:
+            raise ValueError(
+                f"Projection matrix Q has {projection_matrix_Q.shape[0]} samples but "
+                f"genotypes have {standardized_genotypes.shape[0]} samples"
+            )
+
+        # Apply pre-computed projection directly
+        adjusted_standardized_genotypes = _apply_projection_with_Q(
+            standardized_genotypes, projection_matrix_Q
+        )
+    else:
+        # Original workflow: compute Q from covariates
+        # Convert covariates to DataFrame if numpy array
+        if isinstance(covariates, np.ndarray):
+            covariates = pd.DataFrame(covariates)
+
+        # Check if any covariates are still categorical and raise error
+        for col in covariates.columns:
+            if covariates[col].dtype == "object" or isinstance(
+                covariates[col].dtype, pd.CategoricalDtype
+            ):
+                raise ValueError(
+                    f"Column '{col}' is categorical. All categorical covariates should be "
+                    f"one-hot encoded in the load_covariates function before calling regress_out_covariates."
+                )
+
+        # Add intercept
+        covariates = covariates.copy()  # Ensure we have a copy to avoid SettingWithCopyWarning
+        covariates["intercept"] = 1.0
+
+        # Convert to numpy array, ensuring float type
+        X = covariates.to_numpy(dtype=np.float64)
+
+        logger.info(f"Performing FWL projection with {X.shape[1]} covariates (including intercept)")
+
+        # Check if we have too few samples relative to covariates
+        n_samples, n_covariates = X.shape
+        if n_samples <= n_covariates:
+            raise ValueError(
+                f"Number of samples ({n_samples}) is less than or equal to number of covariates ({n_covariates}). "
+                "This will result in a rank-deficient system. Please use fewer covariates."
+            )
+
+        # Perform FWL projection on standardized genotypes
+        # This modifies standardized_genotypes if inplace=True
+        adjusted_standardized_genotypes = _apply_fwl_projection(standardized_genotypes, X)
 
     return adjusted_standardized_genotypes
+
+
+def _apply_projection_with_Q(G: np.ndarray, Q: np.ndarray) -> np.ndarray:
+    """
+    Apply FWL projection using pre-computed Q matrix.
+
+    Parameters:
+    -----------
+    G : numpy.ndarray
+        Genotype matrix (samples x variants), already standardized
+    Q : numpy.ndarray
+        Pre-computed orthogonal matrix from QR decomposition
+
+    Returns:
+    --------
+    numpy.ndarray
+        Residualized genotypes (still in standardized scale)
+    """
+    try:
+        # Compute the projection onto the orthogonal complement of X
+        projection = Q @ (Q.T @ G)
+
+        # Check for NaN in projection before modifying G
+        if np.any(np.isnan(projection)):
+            raise ValueError("Projection calculation produced NaN values")
+
+        # This modifies G in-place
+        G -= projection
+
+        # Check if all values became zero (or near zero)
+        if np.allclose(G, 0, atol=1e-10):
+            logger.warning(
+                "FWL projection resulted in all near-zero values. "
+                "This may indicate perfect collinearity between genotypes and covariates."
+            )
+
+        return G
+
+    except Exception as e:
+        logger.error(f"Projection with pre-computed Q failed: {str(e)}")
+        raise ValueError(f"Failed to apply projection with pre-computed Q: {str(e)}")
 
 
 def _apply_fwl_projection(G: np.ndarray, X: np.ndarray) -> np.ndarray:
