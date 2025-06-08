@@ -227,61 +227,48 @@ def correlation_preserving_transform(
 
     Notes:
     ------
-    This implementation uses a per-variant transformation that maps the standardized values
+    This implementation uses a vectorized transformation that maps the standardized values
     to the [0, 2] range while preserving the relative distances between samples. This ensures
     that the correlation structure is maintained when the genotypes are re-standardized.
-
-    The transformation for each variant:
-    1. Find the min and max of the standardized values
-    2. Linearly map the range [min, max] to a subset of [0, 2] that avoids extreme values
-    3. This preserves relative positions and hence correlations
     """
     logger.info("Converting to allelic scale with correlation-preserving transformation")
 
-    # Create output array
-    allelic_genotypes = np.zeros_like(standardized_genotypes)
+    # Create output array initialized to 1.0 (default for missing/constant variants)
+    allelic_genotypes = np.ones_like(standardized_genotypes)
 
-    # Process each variant independently
-    for j in range(standardized_genotypes.shape[1]):
+    # Vectorized computation of min/max per column (ignoring NaN)
+    with np.errstate(all="ignore"):  # Suppress warnings for all-NaN slices
+        min_vals = np.nanmin(standardized_genotypes, axis=0)
+        max_vals = np.nanmax(standardized_genotypes, axis=0)
+
+    # Compute ranges
+    ranges = max_vals - min_vals
+
+    # Identify variants with non-zero range
+    valid_mask = (ranges > 0) & ~np.isnan(ranges)
+
+    # Target range parameters
+    target_min = 0.1
+    target_max = 1.9
+    target_range = target_max - target_min
+
+    # Compute scale and shift for all valid variants at once
+    scales = np.where(valid_mask, target_range / ranges, 0.0)
+    shifts = np.where(valid_mask, target_min - min_vals * scales, 0.0)
+
+    # Apply transformation to all valid variants using broadcasting
+    # For invalid variants (all NaN or no variation), the output remains 1.0
+    for j in np.where(valid_mask)[0]:
         col = standardized_genotypes[:, j]
+        allelic_genotypes[:, j] = col * scales[j] + shifts[j]
 
-        # Skip if all values are NaN
-        if np.all(np.isnan(col)):
-            allelic_genotypes[:, j] = 1.0
-            continue
+        # Handle missing values for this variant
+        if impute_missing:
+            nan_mask = np.isnan(col)
+            if np.any(nan_mask):
+                allelic_genotypes[nan_mask, j] = 1.0
 
-        # Get non-NaN values
-        non_nan_mask = ~np.isnan(col)
-        col_values = col[non_nan_mask]
-
-        if len(col_values) == 0 or np.std(col_values) == 0:
-            # If no variation, set to middle value
-            allelic_genotypes[:, j] = 1.0
-        else:
-            # Find range of standardized values
-            min_std = np.min(col_values)
-            max_std = np.max(col_values)
-            range_std = max_std - min_std
-
-            # Map to a range that avoids extreme values to prevent clipping
-            # Use [0.1, 1.9] as the target range to avoid boundary effects
-            target_min = 0.1
-            target_max = 1.9
-            target_range = target_max - target_min
-
-            # Linear transformation that preserves relative positions
-            if range_std > 0:
-                scale = target_range / range_std
-                shift = target_min - min_std * scale
-                allelic_genotypes[:, j] = col * scale + shift
-            else:
-                allelic_genotypes[:, j] = 1.0
-
-        # Handle missing values
-        if impute_missing and np.any(~non_nan_mask):
-            allelic_genotypes[~non_nan_mask, j] = 1.0
-
-    # Final safety check - should not be needed with the conservative range
+    # Final safety check - clip to valid range
     allelic_genotypes = np.clip(allelic_genotypes, 0, 2)
 
     return allelic_genotypes

@@ -205,14 +205,30 @@ class BgenFileReader:
             (indices, filtered_sample_ids) where indices are positions in BGEN file
             and filtered_sample_ids are the IDs that were found
         """
-        sample_map = {sid: i for i, sid in enumerate(self.sample_ids)}
-        indices = []
-        filtered_ids = []
+        # Convert to numpy arrays for efficient operations
+        sample_ids_array = np.array(self.sample_ids)
+        ids_to_keep_array = np.array(sample_ids_to_keep)
 
-        for sid in sample_ids_to_keep:
-            if sid in sample_map:
-                indices.append(sample_map[sid])
-                filtered_ids.append(sid)
+        # Find matches using numpy
+        # Create a boolean mask for samples to keep
+        mask = np.isin(sample_ids_array, ids_to_keep_array)
+        indices = np.where(mask)[0].tolist()
+
+        # Get the filtered IDs in the order they appear in BGEN
+        filtered_ids = sample_ids_array[mask].tolist()
+
+        # To preserve the order of sample_ids_to_keep, we need to reorder
+        # Create a mapping from ID to its position in sample_ids_to_keep
+        order_map = {sid: i for i, sid in enumerate(sample_ids_to_keep)}
+
+        # Sort filtered_ids and indices by their order in sample_ids_to_keep
+        if filtered_ids:
+            sorted_pairs = sorted(
+                zip(filtered_ids, indices), key=lambda x: order_map.get(x[0], float("inf"))
+            )
+            filtered_ids, indices = zip(*sorted_pairs)
+            filtered_ids = list(filtered_ids)
+            indices = list(indices)
 
         if len(indices) < len(sample_ids_to_keep):
             missing = set(sample_ids_to_keep) - set(filtered_ids)
