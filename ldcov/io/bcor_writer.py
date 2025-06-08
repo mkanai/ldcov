@@ -264,18 +264,32 @@ class BcorWriter:
             # Extended format: first write diagonal values
             diagonal = np.diag(corr_matrix)
 
-            # Convert diagonal values to integers
-            if self._bytes_per_value == 1:
-                diag_values = np.empty(n_snps, dtype=np.uint8)
-            elif self._bytes_per_value == 2:
-                diag_values = np.empty(n_snps, dtype=np.uint16)
-            elif self._bytes_per_value == 4:
-                diag_values = np.empty(n_snps, dtype=np.uint32)
-            else:  # 8 bytes
-                diag_values = np.empty(n_snps, dtype=np.uint64)
+            # Vectorized conversion of diagonal values
+            nan_mask = np.isnan(diagonal)
+            diag_float = np.empty_like(diagonal)
+            diag_float[~nan_mask] = (diagonal[~nan_mask] + 1.0) * self._shift_factor
+            diag_float[nan_mask] = self._na_value
 
-            for i in range(n_snps):
-                diag_values[i] = self._convert_float_to_int(diagonal[i])
+            # Convert to appropriate integer type and clamp
+            if self._bytes_per_value == 1:
+                diag_values = np.clip(diag_float, 0, min(self._max_val, self._na_value - 1)).astype(
+                    np.uint8
+                )
+            elif self._bytes_per_value == 2:
+                diag_values = np.clip(diag_float, 0, min(self._max_val, self._na_value - 1)).astype(
+                    np.uint16
+                )
+            elif self._bytes_per_value == 4:
+                diag_values = np.clip(diag_float, 0, min(self._max_val, self._na_value - 1)).astype(
+                    np.uint32
+                )
+            else:  # 8 bytes
+                diag_values = np.clip(diag_float, 0, min(self._max_val, self._na_value - 1)).astype(
+                    np.uint64
+                )
+
+            # Set NaN values to the NA marker
+            diag_values[nan_mask] = self._na_value
 
             # Write diagonal values
             fh.write(diag_values.tobytes())
@@ -283,43 +297,44 @@ class BcorWriter:
         # Write lower triangular values (same for both formats)
         n_values = n_snps * (n_snps - 1) // 2
 
-        # Pre-allocate array for all correlation values
-        if self._bytes_per_value == 1:
-            int_values = np.empty(n_values, dtype=np.uint8)
-        elif self._bytes_per_value == 2:
-            int_values = np.empty(n_values, dtype=np.uint16)
-        elif self._bytes_per_value == 4:
-            int_values = np.empty(n_values, dtype=np.uint32)
-        else:  # 8 bytes
-            int_values = np.empty(n_values, dtype=np.uint64)
+        # Extract off-diagonal values using upper triangle indices
+        # Since correlation matrices are symmetric, we can extract from upper triangle
+        # Get upper triangle indices (excluding diagonal)
+        row_indices, col_indices = np.triu_indices(n_snps, k=1)
+        off_diagonal_values = corr_matrix[row_indices, col_indices]
 
-        # Extract lower triangle values efficiently
-        idx = 0
-        for i in range(n_snps - 1):
-            for j in range(i + 1, n_snps):
-                int_values[idx] = self._convert_float_to_int(corr_matrix[i, j])
-                idx += 1
+        # Vectorized conversion from float to int
+        # Handle NaN values
+        nan_mask = np.isnan(off_diagonal_values)
+
+        # Convert non-NaN values
+        int_values_float = np.empty_like(off_diagonal_values)
+        int_values_float[~nan_mask] = (off_diagonal_values[~nan_mask] + 1.0) * self._shift_factor
+        int_values_float[nan_mask] = self._na_value
+
+        # Convert to appropriate integer type and clamp
+        if self._bytes_per_value == 1:
+            int_values = np.clip(
+                int_values_float, 0, min(self._max_val, self._na_value - 1)
+            ).astype(np.uint8)
+        elif self._bytes_per_value == 2:
+            int_values = np.clip(
+                int_values_float, 0, min(self._max_val, self._na_value - 1)
+            ).astype(np.uint16)
+        elif self._bytes_per_value == 4:
+            int_values = np.clip(
+                int_values_float, 0, min(self._max_val, self._na_value - 1)
+            ).astype(np.uint32)
+        else:  # 8 bytes
+            int_values = np.clip(
+                int_values_float, 0, min(self._max_val, self._na_value - 1)
+            ).astype(np.uint64)
+
+        # Set NaN values to the NA marker
+        int_values[nan_mask] = self._na_value
 
         # Write all values at once
         fh.write(int_values.tobytes())
-
-    def _convert_float_to_int(self, x: float) -> int:
-        """Convert correlation value (-1 to 1) to integer for bcor compression."""
-        if np.isnan(x):
-            return self._na_value
-
-        # Shift to [0, 2] range and convert to integer
-        int_val = int((x + 1.0) * self._shift_factor)
-
-        # Clamp to valid range
-        if int_val >= self._na_value:
-            int_val = self._na_value - 1
-        elif int_val > self._max_val:
-            int_val = self._max_val
-        elif int_val < 0:
-            int_val = 0
-
-        return int_val
 
 
 def save_bcor(

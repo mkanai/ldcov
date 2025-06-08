@@ -176,61 +176,55 @@ class BcorReader:
         allele1 = []
         allele2 = []
 
-        # Read all metadata at once if not using mmap
-        if not self._use_mmap:
+        # Calculate metadata size and read all at once
+        if self._use_mmap:
+            # For mmap, calculate position after header
+            # Header size = magic(7) + file_size(8) + n_samples(4) + n_snps(4) + compression(1) + corr_offset(8) = 32
+            header_size = 7 + 8 + 4 + 4 + 1 + 8
+            meta_size = self._corr_block_offset - header_size
+            meta_data = self._mmap[header_size : self._corr_block_offset]
+        else:
+            # For file handle, read all metadata at once
             meta_size = self._corr_block_offset - self._data.tell()
             meta_data = self._data.read(meta_size)
-            offset = 0
 
-            for snp in range(self._n_snps):
-                # Read buffer length
-                L_buffer = struct.unpack_from("<I", meta_data, offset)[0]
-                offset += 4
+        # Process metadata in memory
+        offset = 0
+        for snp in range(self._n_snps):
+            # Read buffer length
+            L_buffer = struct.unpack_from("<I", meta_data, offset)[0]
+            offset += 4
 
-                # Read index
-                index = struct.unpack_from("<I", meta_data, offset)[0]
-                offset += 4
+            # Read index
+            index = struct.unpack_from("<I", meta_data, offset)[0]
+            offset += 4
 
-                # Read RSID
-                L_rsid = struct.unpack_from("<H", meta_data, offset)[0]
-                offset += 2
-                rsid.append(meta_data[offset : offset + L_rsid].decode("utf-8"))
-                offset += L_rsid
+            # Read RSID
+            L_rsid = struct.unpack_from("<H", meta_data, offset)[0]
+            offset += 2
+            rsid.append(meta_data[offset : offset + L_rsid].decode("utf-8"))
+            offset += L_rsid
 
-                # Read position
-                position[snp] = struct.unpack_from("<I", meta_data, offset)[0]
-                offset += 4
+            # Read position
+            position[snp] = struct.unpack_from("<I", meta_data, offset)[0]
+            offset += 4
 
-                # Read chromosome
-                L_chromosome = struct.unpack_from("<H", meta_data, offset)[0]
-                offset += 2
-                chromosome.append(meta_data[offset : offset + L_chromosome].decode("utf-8"))
-                offset += L_chromosome
+            # Read chromosome
+            L_chromosome = struct.unpack_from("<H", meta_data, offset)[0]
+            offset += 2
+            chromosome.append(meta_data[offset : offset + L_chromosome].decode("utf-8"))
+            offset += L_chromosome
 
-                # Read alleles
-                L_allele1 = struct.unpack_from("<I", meta_data, offset)[0]
-                offset += 4
-                allele1.append(meta_data[offset : offset + L_allele1].decode("utf-8"))
-                offset += L_allele1
+            # Read alleles
+            L_allele1 = struct.unpack_from("<I", meta_data, offset)[0]
+            offset += 4
+            allele1.append(meta_data[offset : offset + L_allele1].decode("utf-8"))
+            offset += L_allele1
 
-                L_allele2 = struct.unpack_from("<I", meta_data, offset)[0]
-                offset += 4
-                allele2.append(meta_data[offset : offset + L_allele2].decode("utf-8"))
-                offset += L_allele2
-        else:
-            # Use existing method for mmap
-            for snp in range(self._n_snps):
-                L_buffer = self._HEADER_FORMATS["meta_buffer"].unpack(self._data.read(4))[0]
-                index = self._HEADER_FORMATS["meta_index"].unpack(self._data.read(4))[0]
-                L_rsid = self._HEADER_FORMATS["meta_rsid"].unpack(self._data.read(2))[0]
-                rsid.append(self._data.read(L_rsid).decode("utf-8"))
-                position[snp] = self._HEADER_FORMATS["meta_pos"].unpack(self._data.read(4))[0]
-                L_chromosome = self._HEADER_FORMATS["meta_chrom"].unpack(self._data.read(2))[0]
-                chromosome.append(self._data.read(L_chromosome).decode("utf-8"))
-                L_allele1 = self._HEADER_FORMATS["meta_allele"].unpack(self._data.read(4))[0]
-                allele1.append(self._data.read(L_allele1).decode("utf-8"))
-                L_allele2 = self._HEADER_FORMATS["meta_allele"].unpack(self._data.read(4))[0]
-                allele2.append(self._data.read(L_allele2).decode("utf-8"))
+            L_allele2 = struct.unpack_from("<I", meta_data, offset)[0]
+            offset += 4
+            allele2.append(meta_data[offset : offset + L_allele2].decode("utf-8"))
+            offset += L_allele2
 
         self._meta = pd.DataFrame(
             {
@@ -275,10 +269,13 @@ class BcorReader:
             else:  # 8 bytes
                 diag_int = np.frombuffer(diag_data, dtype=np.uint64)
 
-        # Convert to float
+        # Vectorized conversion to float
+        mask = diag_int != self._na_value
         self._diagonal_values = np.empty(n, dtype=np.float32)
-        for i in range(n):
-            self._diagonal_values[i] = self._convert_int_to_float(diag_int[i])
+        self._diagonal_values[mask] = (
+            np.ldexp(diag_int[mask].astype(np.float64), self._shift_bits) - 1.0
+        )
+        self._diagonal_values[~mask] = np.nan
 
         # Update correlation data offset
         self._corr_data_offset = self._corr_block_offset + n * self._bytes_per_value
@@ -331,13 +328,6 @@ class BcorReader:
         n = self._n_snps
         return (n * (n - 1) // 2) - ((n - snp_y) * (n - snp_y - 1) // 2) + (snp_x - snp_y - 1)
 
-    def _convert_int_to_float(self, x: int) -> float:
-        """Convert integer to correlation value."""
-        if x == self._na_value:
-            return np.nan
-        # Use cached shift value
-        return np.ldexp(x, self._shift_bits) - 1.0
-
     def _read_corr_pair(self, snp_x: int, snp_y: int, seek: bool = True) -> float:
         """Read correlation for a pair of SNPs."""
         # Handle diagonal for extended format
@@ -352,13 +342,17 @@ class BcorReader:
             if self._use_mmap:
                 # Direct access with mmap
                 int_val = self._corr_format.unpack_from(self._mmap, offset)[0]
-                return self._convert_int_to_float(int_val)
+                if int_val == self._na_value:
+                    return np.nan
+                return np.ldexp(int_val, self._shift_bits) - 1.0
             else:
                 self._data.seek(offset)
 
         # Read the value
         int_val = self._corr_format.unpack(self._data.read(self._bytes_per_value))[0]
-        return self._convert_int_to_float(int_val)
+        if int_val == self._na_value:
+            return np.nan
+        return np.ldexp(int_val, self._shift_bits) - 1.0
 
     def _read_full_matrix(self) -> np.ndarray:
         """Read full correlation matrix with bulk I/O."""
@@ -419,12 +413,10 @@ class BcorReader:
         float_values[mask] = np.ldexp(values[mask].astype(np.float64), self._shift_bits) - 1.0
         float_values[~mask] = np.nan
 
-        # Fill the lower triangle
-        idx = 0
-        for i in range(n - 1):
-            for j in range(i + 1, n):
-                corr[j, i] = float_values[idx]
-                idx += 1
+        # Fill the upper triangle using vectorized indexing
+        # The writer extracts values using np.triu_indices in row-major order
+        row_indices, col_indices = np.triu_indices(n, k=1)
+        corr[row_indices, col_indices] = float_values
 
         # Make symmetric (but preserve diagonal)
         return corr + corr.T - np.diag(np.diag(corr))

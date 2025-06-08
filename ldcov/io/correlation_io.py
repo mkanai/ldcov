@@ -71,13 +71,14 @@ def save_correlation_matrix(
 
     # Save matrix in appropriate format
     if output_format == "matrix":
-        # Save the matrix values without any indices
-        with open_func(output_file, mode) as f:
-            n_variants = corr_matrix.shape[0]
-            for i in range(n_variants):
-                # Write one row of the matrix per line
-                row_values = "\t".join(f"{corr_matrix[i, j]}" for j in range(n_variants))
-                f.write(row_values + "\n")
+        # Use numpy's savetxt for efficient matrix writing
+        if is_compressed:
+            # For compressed files, we need to use the file handle
+            with open_func(output_file, mode) as f:
+                np.savetxt(f, corr_matrix, delimiter="\t", fmt="%.6f")
+        else:
+            # For uncompressed files, can use filename directly
+            np.savetxt(output_file, corr_matrix, delimiter="\t", fmt="%.6f")
 
         # Optionally, save variant IDs in a separate index file if variant_info is provided
         if variant_ids:
@@ -95,22 +96,49 @@ def save_correlation_matrix(
             else:
                 f.write("#VAR1\tVAR2\tR\n")
 
-            # Write correlation values
+            # Write correlation values with buffering
             n_variants = corr_matrix.shape[0]
-            for i in range(n_variants):
-                for j in range(i + 1, n_variants):  # Upper triangle only
-                    r = corr_matrix[i, j]
+            buffer = []
+            buffer_size = 10000  # Write in chunks of 10K lines
 
-                    if variant_info is not None:
-                        var1 = variant_info.iloc[i]
-                        var2 = variant_info.iloc[j]
-                        f.write(
-                            f"{var1['chrom']}\t{var1['pos']}\t{var1['id']}\t{var1['ref']}\t{var1['alt']}\t"
-                            f"{var2['chrom']}\t{var2['pos']}\t{var2['id']}\t{var2['ref']}\t{var2['alt']}\t"
+            if variant_info is not None:
+                # Pre-extract variant info arrays for faster access
+                chroms = variant_info["chrom"].values
+                positions = variant_info["pos"].values
+                ids = variant_info["id"].values
+                refs = variant_info["ref"].values
+                alts = variant_info["alt"].values
+
+                for i in range(n_variants):
+                    for j in range(i + 1, n_variants):  # Upper triangle only
+                        r = corr_matrix[i, j]
+
+                        line = (
+                            f"{chroms[i]}\t{positions[i]}\t{ids[i]}\t{refs[i]}\t{alts[i]}\t"
+                            f"{chroms[j]}\t{positions[j]}\t{ids[j]}\t{refs[j]}\t{alts[j]}\t"
                             f"{r:.6f}\n"
                         )
-                    else:
-                        f.write(f"{i}\t{j}\t{r:.6f}\n")
+                        buffer.append(line)
+
+                        if len(buffer) >= buffer_size:
+                            f.writelines(buffer)
+                            buffer.clear()
+            else:
+                # Use numpy to get upper triangle indices
+                row_indices, col_indices = np.triu_indices(n_variants, k=1)
+
+                for idx in range(len(row_indices)):
+                    i, j = row_indices[idx], col_indices[idx]
+                    r = corr_matrix[i, j]
+                    buffer.append(f"{i}\t{j}\t{r:.6f}\n")
+
+                    if len(buffer) >= buffer_size:
+                        f.writelines(buffer)
+                        buffer.clear()
+
+            # Write remaining buffer
+            if buffer:
+                f.writelines(buffer)
 
 
 def load_correlation_matrix(

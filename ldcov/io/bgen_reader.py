@@ -251,33 +251,66 @@ class BgenFileReader:
             logger.info(f"Loading all variants with {self.n_samples} samples")
             n_samples_out = self.n_samples
 
-        variant_info_list = []
-        dosages_list = []
+        # Count variants first (if possible) for pre-allocation
+        # Note: This requires iterating twice, but saves memory and is faster overall
+        try:
+            # Try to get variant count efficiently
+            variant_count = sum(1 for _ in self.bgen_file)
+            self._open_bgen()  # Re-open to reset iterator
+            logger.debug(f"Pre-allocating arrays for {variant_count} variants")
 
-        for i, variant in enumerate(self.bgen_file):
-            # Extract variant info
-            variant_info_list.append(_extract_variant_info(variant, i))
+            # Pre-allocate arrays
+            dosages = np.empty((n_samples_out, variant_count), dtype=dtype)
+            variant_info_list = []
 
-            # Compute dosage
-            try:
-                dosage = _compute_dosage_from_variant(variant)
+            # Load data directly into pre-allocated array
+            for i, variant in enumerate(self.bgen_file):
+                # Extract variant info
+                variant_info_list.append(_extract_variant_info(variant, i))
 
-                # Filter samples immediately if indices provided
-                if sample_indices is not None:
-                    dosage = dosage[sample_indices]
+                # Compute dosage
+                try:
+                    dosage = _compute_dosage_from_variant(variant)
 
-                dosages_list.append(dosage)
-            except Exception as e:
-                logger.warning(f"Error computing dosage for variant {i} ({variant.rsid}): {e}")
-                dosages_list.append(np.full(n_samples_out, np.nan, dtype=dtype))
+                    # Filter samples and assign directly to column
+                    if sample_indices is not None:
+                        dosages[:, i] = dosage[sample_indices]
+                    else:
+                        dosages[:, i] = dosage
+                except Exception as e:
+                    logger.warning(f"Error computing dosage for variant {i} ({variant.rsid}): {e}")
+                    dosages[:, i] = np.nan
 
-        if not variant_info_list:
-            return np.zeros((n_samples_out, 0), dtype=dtype), pd.DataFrame(), n_samples_out
+        except Exception:
+            # Fallback to original implementation if counting fails
+            logger.debug("Could not pre-count variants, using list-based approach")
+            variant_info_list = []
+            dosages_list = []
 
-        # Convert to arrays
-        dosages = np.column_stack(dosages_list).astype(dtype)
+            for i, variant in enumerate(self.bgen_file):
+                # Extract variant info
+                variant_info_list.append(_extract_variant_info(variant, i))
+
+                # Compute dosage
+                try:
+                    dosage = _compute_dosage_from_variant(variant)
+
+                    # Filter samples immediately if indices provided
+                    if sample_indices is not None:
+                        dosage = dosage[sample_indices]
+
+                    dosages_list.append(dosage)
+                except Exception as e:
+                    logger.warning(f"Error computing dosage for variant {i} ({variant.rsid}): {e}")
+                    dosages_list.append(np.full(n_samples_out, np.nan, dtype=dtype))
+
+            if not variant_info_list:
+                return np.zeros((n_samples_out, 0), dtype=dtype), pd.DataFrame(), n_samples_out
+
+            # Convert to arrays
+            dosages = np.column_stack(dosages_list).astype(dtype)
+
         variant_info = pd.DataFrame(variant_info_list)
-
         return dosages, variant_info, n_samples_out
 
     def load_region_variants_and_dosages(
@@ -323,8 +356,10 @@ class BgenFileReader:
                 logger.warning(f"No variants found in region {chrom}:{start_pos}-{end_pos}")
                 return np.zeros((n_samples_out, 0), dtype=dtype), pd.DataFrame(), n_samples_out
 
+            # Pre-allocate arrays now that we know the count
+            n_variants = len(variants_in_region)
+            dosages = np.empty((n_samples_out, n_variants), dtype=dtype)
             variant_info_list = []
-            dosages_list = []
 
             for i, variant in enumerate(variants_in_region):
                 # Extract variant info
@@ -334,19 +369,16 @@ class BgenFileReader:
                 try:
                     dosage = _compute_dosage_from_variant(variant)
 
-                    # Filter samples immediately if indices provided
+                    # Filter samples and assign directly to column
                     if sample_indices is not None:
-                        dosage = dosage[sample_indices]
-
-                    dosages_list.append(dosage)
+                        dosages[:, i] = dosage[sample_indices]
+                    else:
+                        dosages[:, i] = dosage
                 except Exception as e:
                     logger.warning(f"Error computing dosage for variant {i} ({variant.rsid}): {e}")
-                    dosages_list.append(np.full(n_samples_out, np.nan, dtype=dtype))
+                    dosages[:, i] = np.nan
 
-            # Convert to arrays
-            dosages = np.column_stack(dosages_list).astype(dtype)
             variant_info = pd.DataFrame(variant_info_list)
-
             return dosages, variant_info, n_samples_out
 
         except Exception as e:
