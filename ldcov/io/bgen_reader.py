@@ -519,6 +519,49 @@ def load_bgen(
                 "3) Issues with the BGEN file format"
             )
 
+        # Validate genotype data type and check for NaN values
+        # Genotypes should be float32 or float64 from the loader
+        assert np.issubdtype(
+            dosages.dtype, np.floating
+        ), "Genotypes must be floating point for standardization"
+
+        # Check for NaN values in genotypes
+        if np.any(np.isnan(dosages)):
+            # Get detailed information about NaN locations
+            nan_mask = np.isnan(dosages)
+            
+            # Count samples and variants with NaN
+            samples_with_nan = np.any(nan_mask, axis=1)
+            variants_with_nan = np.any(nan_mask, axis=0)
+            n_samples_with_nan = np.sum(samples_with_nan)
+            n_variants_with_nan = np.sum(variants_with_nan)
+            
+            # Get indices of samples and variants with NaN
+            sample_indices_with_nan = np.where(samples_with_nan)[0]
+            variant_indices_with_nan = np.where(variants_with_nan)[0]
+            
+            # Find first 5 sample/variant pairs with NaN
+            nan_locations = np.argwhere(nan_mask)[:5]
+            
+            # Build detailed error message
+            error_msg = (
+                f"Genotype matrix contains NaN values:\n"
+                f"  - {n_samples_with_nan} out of {dosages.shape[0]} samples have NaN values\n"
+                f"  - {n_variants_with_nan} out of {dosages.shape[1]} variants have NaN values\n"
+            )
+            
+            if len(nan_locations) > 0:
+                error_msg += "\nFirst (up to 5) sample/variant pairs with NaN:\n"
+                for i, (sample_idx, variant_idx) in enumerate(nan_locations):
+                    sample_id = filtered_sample_ids[sample_idx]
+                    variant_id = variant_info.iloc[variant_idx]['id'] if 'id' in variant_info else f"variant_{variant_idx}"
+                    variant_pos = variant_info.iloc[variant_idx]['pos'] if 'pos' in variant_info else "unknown"
+                    error_msg += f"  {i+1}. Sample '{sample_id}' (index {sample_idx}), Variant '{variant_id}' at position {variant_pos} (index {variant_idx})\n"
+            
+            error_msg += "\nThis may indicate issues with the input BGEN file or variant filtering."
+            
+            raise ValueError(error_msg)
+
         return dosages, variant_info, filtered_sample_ids
 
     except Exception as e:

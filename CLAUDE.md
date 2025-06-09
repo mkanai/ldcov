@@ -155,6 +155,16 @@ As of January 2025:
 - Comprehensive logging for debugging
 - In-place operations where possible for memory efficiency
 
+## Recent Changes (January 2025)
+
+### Genotype Validation Enhancement
+- **Moved NaN validation** from `standardize_genotypes()` to `load_bgen()` for earlier detection
+- **Enhanced error reporting** for NaN values:
+  - Reports number of samples and variants with NaN values
+  - Shows first 5 sample/variant pairs with NaN values including IDs and positions
+  - Helps users quickly identify problematic data in BGEN files
+- **Updated tests** to reflect the validation change
+
 ## Recent Major Refactoring (January 2025)
 
 ### What was changed:

@@ -38,19 +38,6 @@ def standardize_genotypes(
         - Array of means used for centering
         - Array of norms used for scaling
     """
-    # Genotypes should be float32 or float64 from the loader.
-    # Assert to catch any issues with program flow.
-    assert np.issubdtype(
-        genotypes.dtype, np.floating
-    ), "Genotypes must be floating point for standardization"
-
-    # Check for NaN values in genotypes
-    if np.any(np.isnan(genotypes)):
-        raise ValueError(
-            "Genotype matrix contains NaN values. "
-            "This may indicate issues with the input BGEN file or variant filtering."
-        )
-
     # Calculate means for centering
     means = np.mean(genotypes, axis=0) if center else np.zeros(genotypes.shape[1])
 

@@ -96,16 +96,20 @@ class TestCovariate(unittest.TestCase):
         self.assertEqual(id(std_geno), original_id)
 
     def test_standardize_genotypes_with_missing(self):
-        """Test that standardization raises error with missing values."""
+        """Test that standardization handles NaN values (now checked at load time)."""
         genotypes = np.array(
             [[0, 1, 2, np.nan], [1, np.nan, 1, 1], [2, 1, 0, 2], [np.nan, 2, 1, 0]], dtype=np.float64
         )
 
-        # The standardize_genotypes function now raises an error with NaN values
-        with self.assertRaises(ValueError) as cm:
-            standardize_genotypes(genotypes, center=True, scale=True, inplace=False)
+        # NaN check has been moved to the BGEN loader, so standardize_genotypes
+        # no longer validates for NaN. It will process the data as-is.
+        # This test now verifies that the function handles NaN mathematically
+        std_geno, means, norms = standardize_genotypes(genotypes, center=True, scale=True, inplace=False)
         
-        self.assertIn("Genotype matrix contains NaN values", str(cm.exception))
+        # Check that NaN values are propagated
+        self.assertTrue(np.isnan(std_geno[0, 3]))
+        self.assertTrue(np.isnan(std_geno[1, 1]))
+        self.assertTrue(np.isnan(std_geno[3, 0]))
 
     # ==================== Covariate Adjustment Tests ====================
 

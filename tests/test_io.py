@@ -15,6 +15,7 @@ import os
 import tempfile
 import shutil
 from pathlib import Path
+from unittest.mock import patch
 
 # import gzip  # Used by pd.read_csv for compressed files
 
@@ -152,6 +153,40 @@ class TestIO(unittest.TestCase):
             )
 
         self.assertIn("No variants were loaded", str(context.exception))
+
+    def test_load_bgen_nan_validation(self):
+        """Test that load_bgen raises error when NaN values are detected."""
+        # This test uses a mock since we can't easily create a BGEN file with NaN values
+        with patch("ldcov.io.bgen_reader.BgenFileReader") as mock_reader:
+            # Create mock data with NaN values
+            mock_instance = mock_reader.return_value
+            mock_instance.sample_ids = ["sample1", "sample2", "sample3"]
+            mock_instance.n_samples = 3
+            
+            # Create dosages with NaN values
+            dosages_with_nan = np.array([
+                [0.0, 1.0, np.nan],  # variant 0, sample 2 has NaN
+                [2.0, np.nan, 1.0],  # variant 1, sample 1 has NaN
+                [np.nan, 0.0, 2.0],  # variant 2, sample 0 has NaN
+            ]).T  # Transpose to get samples x variants
+            
+            variant_info = pd.DataFrame({
+                "id": ["rs1", "rs2", "rs3"],
+                "chrom": ["1", "1", "1"],
+                "pos": [100, 200, 300],
+                "ref": ["A", "C", "G"],
+                "alt": ["T", "G", "A"]
+            })
+            
+            mock_instance.load_all_variants_and_dosages.return_value = (
+                dosages_with_nan, variant_info, 3
+            )
+            
+            # Should raise ValueError with detailed NaN information
+            with self.assertRaises(ValueError) as context:
+                load_bgen("dummy.bgen")
+            
+            self.assertIn("Genotype matrix contains NaN values", str(context.exception))
 
     # ==================== BGEN Writer Tests ====================
 
