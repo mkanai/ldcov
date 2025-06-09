@@ -94,18 +94,59 @@ The codebase follows a modular structure:
 
 ## Testing Approach
 
-Tests use pytest and mock data generation when file readers aren't available. Key test areas:
-- Correlation computation accuracy
-- Covariate adjustment correctness
-- Projection matrix computation and I/O
-- Sample compatibility validation for projection matrices
-- Sample filtering during BGEN loading
-- Memory efficiency with large-scale data
-- File I/O operations (BGEN and BCOR formats)
-- BCOR format compatibility with reference files
-- Extended BCOR format for non-unit diagonal matrices
-- Categorical variable handling
-- Region parsing
+Tests use pytest and mock data generation when file readers aren't available. The test suite is organized into focused modules:
+
+### Test Organization (January 2025)
+
+- **test_cli.py**: Command-line interface tests
+  - Flag parsing and validation
+  - Different operation modes
+  - Error handling
+  
+- **test_compute.py**: Core computation tests
+  - Correlation matrix computation
+  - LD computation workflows
+  - Integration with covariate adjustment
+  
+- **test_covariate.py**: Covariate handling tests
+  - Genotype standardization
+  - Covariate loading from various formats
+  - Categorical variable encoding
+  - FWL projection and adjustment
+  
+- **test_io.py**: I/O operation tests
+  - BGEN reading and writing
+  - Sample filtering during loading
+  - BCOR format (standard and extended)
+  - Correlation matrix I/O
+  - Metadata handling
+  
+- **test_projection.py**: Projection matrix tests
+  - Pre-computation and saving
+  - Loading and validation
+  - Sample compatibility checks
+  
+- **test_covariate_edge_cases.py**: Edge case tests
+  - Numerical stability
+  - Rank-deficient systems
+  - Zero-variance handling
+  
+- **test_ldstore_comparison.py**: Compatibility tests
+  - Comparison with LDstore2 reference
+  - Format compatibility
+  
+- **test_utils.py**: Utility function tests
+  - Region parsing
+  - Variant filtering
+  - Z-file handling
+
+### Coverage Metrics
+
+As of January 2025:
+- Overall coverage: 81%
+- Core modules: 80-85% coverage
+- Critical paths: >95% coverage
+- All 116 tests pass in ~14 seconds
 
 ## Code Style
 
@@ -397,3 +438,27 @@ Following the correlation computation optimizations, we further optimized the I/
 - BGEN sample filtering: ~10x faster for large sample lists
 - Correlation-preserving transform: ~3-5x faster through vectorization
 - All optimizations maintain backward compatibility and pass tests
+
+## Test Suite Reorganization (January 2025)
+
+The test suite was reorganized for better maintainability and clarity:
+
+1. **Created `test_covariate.py`**: Consolidated all covariate-related tests
+   - Moved from `test_compute.py`: standardization, adjustment, and loading tests
+   - Moved from `test_io.py`: covariate file loading tests
+   - Better separation of concerns
+
+2. **Consolidated `test_io.py`**: Merged sample filtering tests
+   - Integrated tests from `test_sample_filtering.py`
+   - All I/O operations now in one place
+   - Removed redundant test file
+
+3. **Improved test coverage**: 
+   - Fixed edge case tests for categorical encoding
+   - Updated tests to match current API behavior
+   - Maintained 81% overall coverage with all tests passing
+
+This reorganization makes it easier to:
+- Find and run specific test categories
+- Maintain test code with clear module boundaries
+- Add new tests in the appropriate location

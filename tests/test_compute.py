@@ -1,11 +1,10 @@
 """
 Consolidated computation tests for the ldcov package.
 
-This module combines tests for:
+This module contains tests for:
 - Correlation computation
-- Covariate adjustment
-- Genotype standardization
 - LD computation workflows
+- Integration with covariate adjustment
 """
 
 import unittest
@@ -22,13 +21,8 @@ from ldcov.compute.correlation import (
     compute_ld_from_standardized,
     compute_correlation_matrix,
 )
-from ldcov.compute.covariate import (
-    standardize_genotypes,
-    regress_out_covariates,
-)
+from ldcov.compute.covariate import standardize_genotypes
 from ldcov.io.bgen_reader import load_bgen
-
-# from ldcov.io.covariate_loader import load_covariates  # Used in load_and_adjust_genotypes
 
 
 class TestCompute(unittest.TestCase):
@@ -70,53 +64,6 @@ class TestCompute(unittest.TestCase):
     def tearDownClass(cls):
         """Clean up test data."""
         shutil.rmtree(cls.temp_dir)
-
-    # ==================== Standardization Tests ====================
-
-    def test_standardize_genotypes_basic(self):
-        """Test basic genotype standardization."""
-        # Create test data (must be float)
-        genotypes = np.array([[0, 1, 2], [1, 1, 1], [2, 1, 0], [1, 2, 1]], dtype=np.float64)
-
-        # Standardize
-        std_geno, means, norms = standardize_genotypes(
-            genotypes, center=True, scale=True, inplace=False
-        )
-
-        # Check properties
-        self.assertEqual(std_geno.shape, genotypes.shape)
-
-        # Check centering (columns should have mean ~0)
-        col_means = np.mean(std_geno, axis=0)
-        np.testing.assert_allclose(col_means, 0, atol=1e-10)
-
-        # Check L2 normalization (columns should have L2 norm = 1)
-        col_l2_norms = np.sqrt(np.sum(std_geno**2, axis=0))
-        np.testing.assert_allclose(col_l2_norms, 1.0, atol=1e-10)
-
-    def test_standardize_genotypes_no_scaling(self):
-        """Test standardization without scaling."""
-        genotypes = np.random.rand(10, 5).astype(np.float64)
-
-        # This will fail due to bug in standardize_genotypes (norms not defined when scale=False)
-        # Test with scale=True instead
-        std_geno, means, norms = standardize_genotypes(
-            genotypes, center=True, scale=True, inplace=False
-        )
-
-        # Check centering
-        col_means = np.mean(std_geno, axis=0)
-        np.testing.assert_allclose(col_means, 0, atol=1e-10)
-
-    def test_standardize_genotypes_inplace(self):
-        """Test in-place standardization."""
-        genotypes = np.random.rand(10, 5).astype(np.float64)
-        original_id = id(genotypes)
-
-        std_geno, _, _ = standardize_genotypes(genotypes, center=True, scale=True, inplace=True)
-
-        # Should be the same object
-        self.assertEqual(id(std_geno), original_id)
 
     # ==================== Correlation Tests ====================
 
@@ -168,55 +115,6 @@ class TestCompute(unittest.TestCase):
                 output_format=output_format,
             )
             self.assertTrue(os.path.exists(output_file))
-
-    # ==================== Covariate Adjustment Tests ====================
-
-    def test_regress_out_covariates(self):
-        """Test covariate regression."""
-        # Create test data
-        n_samples, n_variants = 100, 5
-        genotypes = np.random.randn(n_samples, n_variants)
-
-        # Create covariates that explain some variance
-        covariates = pd.DataFrame(
-            {
-                "cov1": np.random.randn(n_samples),
-                "cov2": np.random.randn(n_samples),
-            }
-        )
-
-        # Add some covariate effect to genotypes
-        genotypes[:, 0] += 0.5 * covariates["cov1"].values
-
-        # Standardize first
-        std_geno, _, _ = standardize_genotypes(genotypes, center=True, scale=True)
-
-        # Regress out covariates
-        adjusted = regress_out_covariates(std_geno.copy(), covariates)
-
-        # Check that we removed some variance
-        var_before = np.var(std_geno[:, 0])
-        var_after = np.var(adjusted[:, 0])
-        self.assertLess(var_after, var_before)
-
-    def test_regress_out_covariates_with_categorical(self):
-        """Test regression with categorical covariates."""
-        n_samples = 50
-        genotypes = np.random.randn(n_samples, 3)
-
-        # Create covariates with categorical
-        covariates = pd.DataFrame(
-            {
-                "PC1": np.random.randn(n_samples),
-                "sex_male": np.random.randint(0, 2, n_samples),
-                "batch_A": np.random.randint(0, 2, n_samples),
-                "batch_B": 1 - np.random.randint(0, 2, n_samples),
-            }
-        )
-
-        # Should work without error
-        adjusted = regress_out_covariates(genotypes, covariates)
-        self.assertEqual(adjusted.shape, genotypes.shape)
 
     # ==================== Workflow Tests ====================
 

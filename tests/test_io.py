@@ -741,6 +741,144 @@ class TestIO(unittest.TestCase):
             diag_val = reader.read_corr([i], [i])[0, 0]
             self.assertAlmostEqual(diag_val, diagonal_values[i], places=5)
 
+    # ==================== Sample Filtering Tests ====================
+
+    def test_get_sample_indices(self):
+        """Test sample index mapping."""
+        # Create test data
+        all_sample_ids = [f"SAMPLE_{i:04d}" for i in range(100)]
+        subset_sample_ids = [f"SAMPLE_{i:04d}" for i in range(10, 30)]  # 20 samples
+
+        # Create a BgenFileReader instance
+        reader = BgenFileReader(
+            file_path=str(self.bgen_file),
+            index_path=str(self.bgi_file),
+            sample_path=str(self.sample_file),
+        )
+        # Override sample_ids for testing
+        reader.sample_ids = all_sample_ids
+        reader.n_samples = len(all_sample_ids)
+
+        # Test with subset of samples
+        indices, filtered_ids = reader.get_sample_indices(subset_sample_ids)
+
+        self.assertEqual(len(indices), 20)
+        self.assertEqual(len(filtered_ids), 20)
+        self.assertEqual(indices[0], 10)  # First sample is SAMPLE_0010 at index 10
+        self.assertEqual(indices[-1], 29)  # Last sample is SAMPLE_0029 at index 29
+        self.assertEqual(filtered_ids, subset_sample_ids)
+
+    def test_get_sample_indices_with_missing(self):
+        """Test sample index mapping with missing samples."""
+        # Create test data
+        all_sample_ids = [f"SAMPLE_{i:04d}" for i in range(100)]
+        subset_sample_ids = [f"SAMPLE_{i:04d}" for i in range(10, 30)]  # 20 samples
+
+        # Create a BgenFileReader instance
+        reader = BgenFileReader(
+            file_path=str(self.bgen_file),
+            index_path=str(self.bgi_file),
+            sample_path=str(self.sample_file),
+        )
+        # Override sample_ids for testing
+        reader.sample_ids = all_sample_ids
+        reader.n_samples = len(all_sample_ids)
+
+        # Test with some missing samples
+        requested_samples = subset_sample_ids + ["MISSING_001", "MISSING_002"]
+        indices, filtered_ids = reader.get_sample_indices(requested_samples)
+
+        # Should only return the samples that exist
+        self.assertEqual(len(indices), 20)
+        self.assertEqual(len(filtered_ids), 20)
+        self.assertEqual(filtered_ids, subset_sample_ids)
+
+    def test_load_bgen_with_sample_filtering(self):
+        """Test BGEN loading with sample filtering."""
+        # Load all samples first to get the full list
+        all_genotypes, all_variant_info, all_sample_ids = load_bgen(
+            file_path=str(self.bgen_file),
+            index_path=str(self.bgi_file),
+            sample_path=str(self.sample_file),
+        )
+
+        # Skip test if too few samples
+        if len(all_sample_ids) < 4:
+            self.skipTest("Not enough samples for filtering test")
+
+        # Select a subset of samples
+        subset_samples = all_sample_ids[::2]  # Every other sample
+
+        # Load with sample filtering
+        filtered_genotypes, filtered_variant_info, filtered_sample_ids = load_bgen(
+            file_path=str(self.bgen_file),
+            index_path=str(self.bgi_file),
+            sample_path=str(self.sample_file),
+            sample_ids=subset_samples,
+        )
+
+        # Verify filtering worked
+        self.assertEqual(len(filtered_sample_ids), len(subset_samples))
+        self.assertEqual(filtered_sample_ids, subset_samples)
+        self.assertEqual(filtered_genotypes.shape[0], len(subset_samples))
+        self.assertEqual(filtered_genotypes.shape[1], all_genotypes.shape[1])
+
+        # Verify the genotype data matches for the filtered samples
+        for i, sample_id in enumerate(subset_samples):
+            orig_idx = all_sample_ids.index(sample_id)
+            np.testing.assert_array_almost_equal(
+                filtered_genotypes[i, :], all_genotypes[orig_idx, :]
+            )
+
+    def test_sample_filtering_with_missing_samples(self):
+        """Test that missing samples are handled gracefully."""
+        # Get actual sample IDs
+        _, _, actual_sample_ids = load_bgen(
+            file_path=str(self.bgen_file),
+            index_path=str(self.bgi_file),
+            sample_path=str(self.sample_file),
+        )
+
+        if len(actual_sample_ids) < 2:
+            self.skipTest("Not enough samples for test")
+
+        # Request some existing and some non-existing samples
+        requested_samples = [actual_sample_ids[0], "FAKE_SAMPLE_1", actual_sample_ids[1], "FAKE_SAMPLE_2"]
+
+        # Load with filtering
+        filtered_genotypes, _, filtered_sample_ids = load_bgen(
+            file_path=str(self.bgen_file),
+            index_path=str(self.bgi_file),
+            sample_path=str(self.sample_file),
+            sample_ids=requested_samples,
+        )
+
+        # Should only get the existing samples
+        self.assertEqual(len(filtered_sample_ids), 2)
+        self.assertEqual(filtered_sample_ids, [actual_sample_ids[0], actual_sample_ids[1]])
+
+    def test_memory_efficiency_calculation(self):
+        """Test that sample filtering reduces memory usage (conceptual test)."""
+        # This is a conceptual test showing the memory benefit
+
+        # Without filtering: 500K samples × 10K variants × 8 bytes
+        memory_without_filtering = 500_000 * 10_000 * 8 / (1024**3)  # GB
+
+        # With filtering: 10K samples × 10K variants × 8 bytes
+        memory_with_filtering = 10_000 * 10_000 * 8 / (1024**3)  # GB
+
+        memory_saved = memory_without_filtering - memory_with_filtering
+        savings_percent = memory_saved / memory_without_filtering * 100
+
+        # Assert significant memory savings
+        self.assertGreater(savings_percent, 95)  # >95% savings
+
+        # Log the calculation for reference
+        print(f"\nMemory usage comparison:")
+        print(f"Without filtering: {memory_without_filtering:.1f} GB")
+        print(f"With filtering: {memory_with_filtering:.1f} GB")
+        print(f"Memory saved: {memory_saved:.1f} GB ({savings_percent:.0f}%)")
+
     def test_bcor_backward_compatibility(self):
         """Test that standard bcor files can still be read correctly."""
         n_vars = 5
