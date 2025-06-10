@@ -139,6 +139,16 @@ Examples:
         action="store_true",
         help="Disable progress bars during loading (useful for scripts)"
     )
+    
+    parser.add_argument(
+        "--nan-action",
+        choices=["error", "mean", "omit"],
+        default="error",
+        help="Action for handling NaN values in genotypes: "
+             "'error' (default) - raise error if NaN values are found; "
+             "'mean' - impute NaN values with variant mean; "
+             "'omit' - remove samples with NaN values (with warnings)"
+    )
 
     return parser.parse_args()
 
@@ -251,6 +261,7 @@ def run_cli():
         covariate_id_col=args.covariate_id_col,
         covariate_cols=args.covariate_cols,
         show_progress=not args.no_progress,
+        nan_action=args.nan_action,
     )
     standardized_genotypes, variant_info, sample_ids, means, norms = result
 

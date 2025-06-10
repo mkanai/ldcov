@@ -100,6 +100,118 @@ def _normalize_chromosome(chrom: str) -> str:
     return chrom[3:] if chrom.startswith("chr") else chrom
 
 
+def _impute_nan_with_mean(
+    dosages: np.ndarray, variant_info: pd.DataFrame
+) -> Tuple[np.ndarray, pd.DataFrame]:
+    """
+    Impute NaN values with variant-wise mean.
+    
+    Parameters:
+    -----------
+    dosages : np.ndarray
+        Genotype dosage matrix (samples x variants)
+    variant_info : pd.DataFrame
+        Variant information
+        
+    Returns:
+    --------
+    tuple
+        (imputed_dosages, variant_info)
+    """
+    # Count NaN values for logging
+    nan_mask = np.isnan(dosages)
+    n_nan_total = np.sum(nan_mask)
+    variants_with_nan = np.any(nan_mask, axis=0)
+    n_variants_with_nan = np.sum(variants_with_nan)
+    
+    logger.warning(
+        f"Found {n_nan_total} NaN values across {n_variants_with_nan} variants. "
+        f"Imputing with variant-wise mean."
+    )
+    
+    # Create a copy to avoid modifying original
+    imputed_dosages = dosages.copy()
+    
+    # Impute variant by variant
+    for j in range(dosages.shape[1]):
+        if np.any(nan_mask[:, j]):
+            # Calculate mean excluding NaN values
+            variant_mean = np.nanmean(dosages[:, j])
+            
+            # If all values are NaN for this variant, use 0
+            if np.isnan(variant_mean):
+                logger.warning(
+                    f"Variant {variant_info.iloc[j]['id']} at position "
+                    f"{variant_info.iloc[j]['pos']} has all NaN values. Imputing with 0."
+                )
+                variant_mean = 0.0
+            
+            # Impute NaN values with mean
+            imputed_dosages[nan_mask[:, j], j] = variant_mean
+    
+    return imputed_dosages, variant_info
+
+
+def _omit_nan_samples(
+    dosages: np.ndarray, variant_info: pd.DataFrame, sample_ids: List[str]
+) -> Tuple[np.ndarray, pd.DataFrame, List[str]]:
+    """
+    Omit samples with any NaN values.
+    
+    Parameters:
+    -----------
+    dosages : np.ndarray
+        Genotype dosage matrix (samples x variants)
+    variant_info : pd.DataFrame
+        Variant information
+    sample_ids : list of str
+        Sample IDs
+        
+    Returns:
+    --------
+    tuple
+        (filtered_dosages, variant_info, filtered_sample_ids)
+    """
+    # Find samples with any NaN values
+    nan_mask = np.isnan(dosages)
+    samples_with_nan = np.any(nan_mask, axis=1)
+    n_samples_with_nan = np.sum(samples_with_nan)
+    
+    if n_samples_with_nan == 0:
+        return dosages, variant_info, sample_ids
+    
+    # Log warning about samples being removed
+    logger.warning(
+        f"Removing {n_samples_with_nan} samples with NaN values out of {len(sample_ids)} total samples."
+    )
+    
+    # Show first few sample IDs being removed
+    removed_sample_ids = [sample_ids[i] for i in np.where(samples_with_nan)[0][:5]]
+    if n_samples_with_nan <= 5:
+        logger.warning(f"Removed samples: {', '.join(removed_sample_ids)}")
+    else:
+        logger.warning(
+            f"First 5 removed samples: {', '.join(removed_sample_ids)} "
+            f"(and {n_samples_with_nan - 5} more)"
+        )
+    
+    # Keep only samples without NaN
+    keep_mask = ~samples_with_nan
+    filtered_dosages = dosages[keep_mask, :]
+    filtered_sample_ids = [sid for i, sid in enumerate(sample_ids) if keep_mask[i]]
+    
+    # Also check if any variants now have all missing values
+    all_nan_variants = np.all(np.isnan(filtered_dosages), axis=0)
+    if np.any(all_nan_variants):
+        n_all_nan = np.sum(all_nan_variants)
+        logger.warning(
+            f"After removing samples, {n_all_nan} variants have no valid data. "
+            f"Consider using 'mean' imputation instead."
+        )
+    
+    return filtered_dosages, variant_info, filtered_sample_ids
+
+
 def _report_nan_error(
     dosages: np.ndarray, variant_info: pd.DataFrame, sample_ids: List[str]
 ) -> None:
@@ -607,6 +719,7 @@ def load_bgen(
     sample_ids: Optional[List[str]] = None,
     dtype: np.dtype = np.float64,
     show_progress: bool = True,
+    nan_action: str = "error",
 ) -> Tuple[np.ndarray, pd.DataFrame, List[str]]:
     """
     Load genotype data from BGEN file.
@@ -629,6 +742,8 @@ def load_bgen(
         Data type for the dosage array (default: np.float64)
     show_progress : bool, optional
         Whether to show progress bars during loading (default: True)
+    nan_action : str, optional
+        Action for handling NaN values: 'error' (default), 'mean', or 'omit'
 
     Returns:
     --------
@@ -721,8 +836,18 @@ def load_bgen(
         # Validate genotypes
         assert np.issubdtype(dosages.dtype, np.floating), "Genotypes must be floating point"
 
+        # Handle NaN values based on nan_action
         if np.any(np.isnan(dosages)):
-            _report_nan_error(dosages, variant_info, filtered_sample_ids)
+            if nan_action == "error":
+                _report_nan_error(dosages, variant_info, filtered_sample_ids)
+            elif nan_action == "mean":
+                dosages, variant_info = _impute_nan_with_mean(dosages, variant_info)
+            elif nan_action == "omit":
+                dosages, variant_info, filtered_sample_ids = _omit_nan_samples(
+                    dosages, variant_info, filtered_sample_ids
+                )
+            else:
+                raise ValueError(f"Unknown nan_action: {nan_action}")
 
         return dosages, variant_info, filtered_sample_ids
 
