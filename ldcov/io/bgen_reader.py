@@ -105,14 +105,14 @@ def _impute_nan_with_mean(
 ) -> Tuple[np.ndarray, pd.DataFrame]:
     """
     Impute NaN values with variant-wise mean.
-    
+
     Parameters:
     -----------
     dosages : np.ndarray
         Genotype dosage matrix (samples x variants)
     variant_info : pd.DataFrame
         Variant information
-        
+
     Returns:
     --------
     tuple
@@ -123,21 +123,21 @@ def _impute_nan_with_mean(
     n_nan_total = np.sum(nan_mask)
     variants_with_nan = np.any(nan_mask, axis=0)
     n_variants_with_nan = np.sum(variants_with_nan)
-    
+
     logger.warning(
         f"Found {n_nan_total} NaN values across {n_variants_with_nan} variants. "
         f"Imputing with variant-wise mean."
     )
-    
+
     # Create a copy to avoid modifying original
     imputed_dosages = dosages.copy()
-    
+
     # Impute variant by variant
     for j in range(dosages.shape[1]):
         if np.any(nan_mask[:, j]):
             # Calculate mean excluding NaN values
             variant_mean = np.nanmean(dosages[:, j])
-            
+
             # If all values are NaN for this variant, use 0
             if np.isnan(variant_mean):
                 logger.warning(
@@ -145,10 +145,10 @@ def _impute_nan_with_mean(
                     f"{variant_info.iloc[j]['pos']} has all NaN values. Imputing with 0."
                 )
                 variant_mean = 0.0
-            
+
             # Impute NaN values with mean
             imputed_dosages[nan_mask[:, j], j] = variant_mean
-    
+
     return imputed_dosages, variant_info
 
 
@@ -157,7 +157,7 @@ def _omit_nan_samples(
 ) -> Tuple[np.ndarray, pd.DataFrame, List[str]]:
     """
     Omit samples with any NaN values.
-    
+
     Parameters:
     -----------
     dosages : np.ndarray
@@ -166,7 +166,7 @@ def _omit_nan_samples(
         Variant information
     sample_ids : list of str
         Sample IDs
-        
+
     Returns:
     --------
     tuple
@@ -176,15 +176,15 @@ def _omit_nan_samples(
     nan_mask = np.isnan(dosages)
     samples_with_nan = np.any(nan_mask, axis=1)
     n_samples_with_nan = np.sum(samples_with_nan)
-    
+
     if n_samples_with_nan == 0:
         return dosages, variant_info, sample_ids
-    
+
     # Log warning about samples being removed
     logger.warning(
         f"Removing {n_samples_with_nan} samples with NaN values out of {len(sample_ids)} total samples."
     )
-    
+
     # Show first few sample IDs being removed
     removed_sample_ids = [sample_ids[i] for i in np.where(samples_with_nan)[0][:5]]
     if n_samples_with_nan <= 5:
@@ -194,12 +194,12 @@ def _omit_nan_samples(
             f"First 5 removed samples: {', '.join(removed_sample_ids)} "
             f"(and {n_samples_with_nan - 5} more)"
         )
-    
+
     # Keep only samples without NaN
     keep_mask = ~samples_with_nan
     filtered_dosages = dosages[keep_mask, :]
     filtered_sample_ids = [sid for i, sid in enumerate(sample_ids) if keep_mask[i]]
-    
+
     # Also check if any variants now have all missing values
     all_nan_variants = np.all(np.isnan(filtered_dosages), axis=0)
     if np.any(all_nan_variants):
@@ -208,7 +208,7 @@ def _omit_nan_samples(
             f"After removing samples, {n_all_nan} variants have no valid data. "
             f"Consider using 'mean' imputation instead."
         )
-    
+
     return filtered_dosages, variant_info, filtered_sample_ids
 
 
@@ -275,8 +275,11 @@ class BgenFileReader:
     """
 
     def __init__(
-        self, file_path: str, index_path: Optional[str] = None, sample_path: Optional[str] = None,
-        show_progress: bool = True
+        self,
+        file_path: str,
+        index_path: Optional[str] = None,
+        sample_path: Optional[str] = None,
+        show_progress: bool = True,
     ):
         """
         Initialize BGEN reader.
@@ -483,7 +486,9 @@ class BgenFileReader:
         try:
             logger.info("Counting variants...")
             if self.show_progress:
-                variant_count = sum(1 for _ in tqdm(self.bgen_file, desc="Counting variants", unit="variants"))
+                variant_count = sum(
+                    1 for _ in tqdm(self.bgen_file, desc="Counting variants", unit="variants")
+                )
             else:
                 variant_count = sum(1 for _ in self.bgen_file)
             self._open_bgen()  # Re-open to reset iterator
@@ -522,7 +527,11 @@ class BgenFileReader:
         variant_to_bgen_idx = {}
         rsid_to_bgen_idx = {}
 
-        iterator = tqdm(self.bgen_file, desc="Scanning variants", unit="variants") if self.show_progress else self.bgen_file
+        iterator = (
+            tqdm(self.bgen_file, desc="Scanning variants", unit="variants")
+            if self.show_progress
+            else self.bgen_file
+        )
         for i, variant in enumerate(iterator):
             var_info = _extract_variant_info(variant, i)
             all_variant_info.append(var_info)
@@ -610,7 +619,16 @@ class BgenFileReader:
                 dosages = np.empty((n_samples_out, variant_count), dtype=dtype)
                 variant_info_list = []
 
-                iterator = tqdm(self.bgen_file, total=variant_count, desc="Loading variants", unit="variants") if self.show_progress else self.bgen_file
+                iterator = (
+                    tqdm(
+                        self.bgen_file,
+                        total=variant_count,
+                        desc="Loading variants",
+                        unit="variants",
+                    )
+                    if self.show_progress
+                    else self.bgen_file
+                )
                 for i, variant in enumerate(iterator):
                     variant_info_list.append(_extract_variant_info(variant, i))
                     self._process_variant_dosage(variant, i, dosages, i, sample_indices)
@@ -623,7 +641,11 @@ class BgenFileReader:
                 dosage_list = []
                 variant_info_list = []
 
-                iterator = tqdm(self.bgen_file, desc="Loading variants", unit="variants") if self.show_progress else self.bgen_file
+                iterator = (
+                    tqdm(self.bgen_file, desc="Loading variants", unit="variants")
+                    if self.show_progress
+                    else self.bgen_file
+                )
                 for i, variant in enumerate(iterator):
                     variant_info_list.append(_extract_variant_info(variant, i))
 
@@ -656,7 +678,15 @@ class BgenFileReader:
             variant_info_list = []
 
             # Process variants
-            iterator = tqdm(variants_in_region, desc=f"Loading region {search_chrom}:{start_pos}-{end_pos}", unit="variants") if self.show_progress else variants_in_region
+            iterator = (
+                tqdm(
+                    variants_in_region,
+                    desc=f"Loading region {search_chrom}:{start_pos}-{end_pos}",
+                    unit="variants",
+                )
+                if self.show_progress
+                else variants_in_region
+            )
             for i, variant in enumerate(iterator):
                 variant_info_list.append(_extract_variant_info(variant, i))
                 self._process_variant_dosage(variant, i, dosages, i, sample_indices)
@@ -677,11 +707,15 @@ class BgenFileReader:
             # Process only the variants we need
             processed = 0
             if self.show_progress:
-                with tqdm(total=n_variants, desc="Loading filtered variants", unit="variants") as pbar:
+                with tqdm(
+                    total=n_variants, desc="Loading filtered variants", unit="variants"
+                ) as pbar:
                     for i, variant in enumerate(self.bgen_file):
                         if i in indices_to_output:
                             output_idx = indices_to_output[i]
-                            self._process_variant_dosage(variant, i, dosages, output_idx, sample_indices)
+                            self._process_variant_dosage(
+                                variant, i, dosages, output_idx, sample_indices
+                            )
                             processed += 1
                             pbar.update(1)
 
@@ -692,7 +726,9 @@ class BgenFileReader:
                 for i, variant in enumerate(self.bgen_file):
                     if i in indices_to_output:
                         output_idx = indices_to_output[i]
-                        self._process_variant_dosage(variant, i, dosages, output_idx, sample_indices)
+                        self._process_variant_dosage(
+                            variant, i, dosages, output_idx, sample_indices
+                        )
                         processed += 1
 
                         # Stop if we've processed all needed variants
@@ -755,8 +791,10 @@ def load_bgen(
     """
     # Open BGEN file
     bgen_reader = BgenFileReader(
-        file_path=file_path, index_path=index_path, sample_path=sample_path,
-        show_progress=show_progress
+        file_path=file_path,
+        index_path=index_path,
+        sample_path=sample_path,
+        show_progress=show_progress,
     )
 
     try:

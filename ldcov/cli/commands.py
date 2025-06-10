@@ -133,21 +133,21 @@ Examples:
     )
 
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
-    
+
     parser.add_argument(
         "--no-progress",
         action="store_true",
-        help="Disable progress bars during loading (useful for scripts)"
+        help="Disable progress bars during loading (useful for scripts)",
     )
-    
+
     parser.add_argument(
         "--nan-action",
         choices=["error", "mean", "omit"],
         default="error",
         help="Action for handling NaN values in genotypes: "
-             "'error' (default) - raise error if NaN values are found; "
-             "'mean' - impute NaN values with variant mean; "
-             "'omit' - remove samples with NaN values (with warnings)"
+        "'error' (default) - raise error if NaN values are found; "
+        "'mean' - impute NaN values with variant mean; "
+        "'omit' - remove samples with NaN values (with warnings)",
     )
 
     return parser.parse_args()

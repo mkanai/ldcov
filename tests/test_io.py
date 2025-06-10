@@ -314,7 +314,7 @@ class TestIO(unittest.TestCase):
                 load_bgen("dummy.bgen", nan_action="error")
 
             self.assertIn("Genotype matrix contains NaN values", str(context.exception))
-    
+
     def test_load_bgen_nan_mean_imputation(self):
         """Test mean imputation for NaN values."""
         with patch("ldcov.io.bgen_reader.BgenFileReader") as mock_reader:
@@ -324,19 +324,23 @@ class TestIO(unittest.TestCase):
             mock_instance.n_samples = 4
 
             # Create dosages with NaN values
-            dosages_with_nan = np.array([
-                [1.0, 2.0, np.nan, 1.5],  # variant 0: mean should be 1.5
-                [0.0, 0.0, 0.0, 0.0],      # variant 1: no NaN
-                [np.nan, np.nan, np.nan, np.nan],  # variant 2: all NaN, should be 0
-            ]).T  # Transpose to get samples x variants
+            dosages_with_nan = np.array(
+                [
+                    [1.0, 2.0, np.nan, 1.5],  # variant 0: mean should be 1.5
+                    [0.0, 0.0, 0.0, 0.0],  # variant 1: no NaN
+                    [np.nan, np.nan, np.nan, np.nan],  # variant 2: all NaN, should be 0
+                ]
+            ).T  # Transpose to get samples x variants
 
-            variant_info = pd.DataFrame({
-                "id": ["rs1", "rs2", "rs3"],
-                "chrom": ["1", "1", "1"],
-                "pos": [100, 200, 300],
-                "ref": ["A", "C", "G"],
-                "alt": ["T", "G", "A"],
-            })
+            variant_info = pd.DataFrame(
+                {
+                    "id": ["rs1", "rs2", "rs3"],
+                    "chrom": ["1", "1", "1"],
+                    "pos": [100, 200, 300],
+                    "ref": ["A", "C", "G"],
+                    "alt": ["T", "G", "A"],
+                }
+            )
 
             mock_instance._prepare_all_variants.return_value = (None, None, None)
             mock_instance._load_dosages.return_value = (dosages_with_nan, variant_info, 4)
@@ -346,12 +350,12 @@ class TestIO(unittest.TestCase):
 
             # Check no NaN remains
             self.assertFalse(np.any(np.isnan(dosages)))
-            
+
             # Check imputed values
             self.assertAlmostEqual(dosages[2, 0], 1.5)  # Imputed with mean
             self.assertEqual(dosages[0, 2], 0.0)  # All NaN variant imputed with 0
             self.assertEqual(dosages[1, 1], 0.0)  # Original value unchanged
-    
+
     def test_load_bgen_nan_omit_samples(self):
         """Test omitting samples with NaN values."""
         with patch("ldcov.io.bgen_reader.BgenFileReader") as mock_reader:
@@ -362,20 +366,24 @@ class TestIO(unittest.TestCase):
 
             # Create dosages with NaN values
             # sample1 and sample3 have NaN values
-            dosages_with_nan = np.array([
-                [np.nan, 2.0, 1.0, 1.5],  # sample1 has NaN
-                [1.0, 0.0, 0.5, 2.0],      # sample2 is clean
-                [0.5, np.nan, 1.5, 0.0],  # sample3 has NaN
-                [2.0, 1.0, 0.0, 1.0],      # sample4 is clean
-            ])
+            dosages_with_nan = np.array(
+                [
+                    [np.nan, 2.0, 1.0, 1.5],  # sample1 has NaN
+                    [1.0, 0.0, 0.5, 2.0],  # sample2 is clean
+                    [0.5, np.nan, 1.5, 0.0],  # sample3 has NaN
+                    [2.0, 1.0, 0.0, 1.0],  # sample4 is clean
+                ]
+            )
 
-            variant_info = pd.DataFrame({
-                "id": ["rs1", "rs2", "rs3", "rs4"],
-                "chrom": ["1", "1", "1", "1"],
-                "pos": [100, 200, 300, 400],
-                "ref": ["A", "C", "G", "T"],
-                "alt": ["T", "G", "A", "C"],
-            })
+            variant_info = pd.DataFrame(
+                {
+                    "id": ["rs1", "rs2", "rs3", "rs4"],
+                    "chrom": ["1", "1", "1", "1"],
+                    "pos": [100, 200, 300, 400],
+                    "ref": ["A", "C", "G", "T"],
+                    "alt": ["T", "G", "A", "C"],
+                }
+            )
 
             mock_instance._prepare_all_variants.return_value = (None, None, None)
             mock_instance._load_dosages.return_value = (dosages_with_nan, variant_info, 4)
@@ -389,10 +397,10 @@ class TestIO(unittest.TestCase):
             self.assertIn("sample4", sample_ids)
             self.assertNotIn("sample1", sample_ids)
             self.assertNotIn("sample3", sample_ids)
-            
+
             # Check dosage matrix shape
             self.assertEqual(dosages.shape, (2, 4))  # 2 samples, 4 variants
-            
+
             # Check no NaN in filtered data
             self.assertFalse(np.any(np.isnan(dosages)))
 
