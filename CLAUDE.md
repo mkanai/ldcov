@@ -11,6 +11,8 @@ ldcov (formerly pyldbm) is a Python package for efficient linkage disequilibrium
 **NEW (January 2025)**: 
 - Added pre-computed projection matrix support for efficient large-scale analyses. QR decomposition can now be computed once and reused across multiple genomic regions or distributed computing jobs.
 - Implemented sample filtering during BGEN loading for memory efficiency. When working with large BGEN files (e.g., 500K samples) and smaller covariate sets (e.g., 10K samples), only the needed samples are loaded into memory.
+- Added progress bars for variant loading operations using `tqdm` library. Use `--no-progress` flag to disable for scripting.
+- Added `--nan-action` option for flexible NaN handling in genotype data with three strategies: 'error' (default), 'mean' (impute with variant mean), or 'omit' (remove samples with NaN).
 
 ## Development Commands
 
@@ -42,6 +44,12 @@ ldcov --bgen data.bgen --projection-matrix myproject.proj.npz --compute-ld --out
 
 # Compute LD and save projection for future use
 ldcov --bgen data.bgen -c covariates.txt --compute-ld --save-projection --out results
+
+# Handle NaN values with mean imputation
+ldcov --bgen data.bgen --compute-ld --nan-action mean --out results
+
+# Disable progress bars for scripting
+ldcov --bgen data.bgen --compute-ld --no-progress --out results
 ```
 
 ## Architecture (Simplified in 2025)
@@ -157,23 +165,19 @@ As of January 2025:
 
 ## Recent Changes (January 2025)
 
-### Genotype Validation Enhancement
-- **Moved NaN validation** from `standardize_genotypes()` to `load_bgen()` for earlier detection
+### NaN Handling Enhancement
+- **Added `--nan-action` option** with three strategies for handling NaN values in genotype data:
+  - `error` (default): Raises detailed error showing which samples/variants have NaN
+  - `mean`: Imputes NaN values with variant-wise mean (0 if all values are NaN)
+  - `omit`: Removes samples containing any NaN values with warnings
 - **Enhanced error reporting** for NaN values:
   - Reports number of samples and variants with NaN values
   - Shows first 5 sample/variant pairs with NaN values including IDs and positions
   - Helps users quickly identify problematic data in BGEN files
-- **Updated tests** to reflect the validation change
+- **Added progress bars** for all variant loading operations using `tqdm`
+  - Use `--no-progress` flag to disable for scripting/logging
 
-### Efficient Variant Filtering
-- **Optimized variant filtering**: When using a `.z` file filter, only the requested variants are loaded
-- **Two-pass approach**: First pass identifies matching variants, second pass loads only those variants
-- **Memory efficient**: Significantly reduces memory usage and improves performance for large BGEN files
-- **Correct ordering**: Maintains variant ordering according to `.z` file specification
-- **Previous behavior**: Loaded all variants then filtered (inefficient for large files)
-- **New behavior**: Loads only the filtered variants (efficient for any file size)
-
-### BGEN Reader Architecture Refactoring (January 2025)
+### BGEN Reader Architecture Refactoring
 - **Consolidated API**: Removed three public methods (`load_all_variants_and_dosages`, `load_region_variants_and_dosages`, `load_filtered_variants_and_dosages`) from BgenFileReader class
 - **Simplified interface**: All BGEN loading now goes through the single `load_bgen()` function
 - **Clean separation of concerns**:
@@ -185,6 +189,12 @@ As of January 2025:
   - Easier to extend with new selection criteria
   - Better testability of individual components
 - **Alpha version**: Breaking changes acceptable as this is pre-release software
+
+### Efficient Variant Filtering
+- **Optimized variant filtering**: When using a `.z` file filter, only the requested variants are loaded
+- **Two-pass approach**: First pass identifies matching variants, second pass loads only those variants
+- **Memory efficient**: Significantly reduces memory usage and improves performance for large BGEN files
+- **Correct ordering**: Maintains variant ordering according to `.z` file specification
 
 ## Recent Major Refactoring (January 2025)
 
@@ -493,3 +503,30 @@ This reorganization makes it easier to:
 - Find and run specific test categories
 - Maintain test code with clear module boundaries
 - Add new tests in the appropriate location
+
+## CI/CD and Packaging (January 2025)
+
+### GitHub Actions CI
+- **Python versions**: Tests run on Python 3.8, 3.9, 3.10, and 3.11
+- **Workflow**: Located in `.github/workflows/ci.yml`
+- **Checks performed**:
+  - Code linting with flake8 (max-line-length: 100)
+  - Code formatting check with black
+  - Full test suite with pytest and coverage reporting
+  - Package building and validation with twine
+- **Branch support**: CI runs on both `main` and `master` branches
+
+### Package Configuration
+- **Build system**: Uses setuptools with pyproject.toml configuration
+- **Package discovery**: Automatic discovery with `[tool.setuptools.packages.find]`
+- **License format**: Uses `{text = "MIT License"}` table format for compatibility with older setuptools
+- **Python requirement**: `>=3.8` (dropped 3.6/3.7 support)
+- **Version management**: Dynamic versioning with setuptools_scm
+
+### Known Issues and Workarounds
+- **License deprecation warning**: Newer setuptools versions show a deprecation warning for the table-style license format, but this is necessary for Python 3.8 compatibility
+- **MANIFEST.in warning**: "no files found matching '*.py' under directory 'examples'" is expected as examples directory contains only data files
+
+### Development Dependencies
+- Core: numpy>=1.19.0, pandas>=1.0.0, bgen, gcsfs>=0.7.0, tqdm>=4.50.0
+- Dev: pytest>=6.0.0, pytest-cov>=2.10.0, black>=20.8b1, flake8>=3.8.0
