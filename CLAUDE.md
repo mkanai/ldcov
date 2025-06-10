@@ -167,12 +167,24 @@ As of January 2025:
 
 ### Efficient Variant Filtering
 - **Optimized variant filtering**: When using a `.z` file filter, only the requested variants are loaded
-- **New method** `load_filtered_variants_and_dosages()` in BgenFileReader:
-  - Two-pass approach: first pass identifies matching variants, second pass loads only those variants
-  - Significantly reduces memory usage and improves performance for large BGEN files
-  - Maintains correct ordering according to `.z` file specification
+- **Two-pass approach**: First pass identifies matching variants, second pass loads only those variants
+- **Memory efficient**: Significantly reduces memory usage and improves performance for large BGEN files
+- **Correct ordering**: Maintains variant ordering according to `.z` file specification
 - **Previous behavior**: Loaded all variants then filtered (inefficient for large files)
 - **New behavior**: Loads only the filtered variants (efficient for any file size)
+
+### BGEN Reader Architecture Refactoring (January 2025)
+- **Consolidated API**: Removed three public methods (`load_all_variants_and_dosages`, `load_region_variants_and_dosages`, `load_filtered_variants_and_dosages`) from BgenFileReader class
+- **Simplified interface**: All BGEN loading now goes through the single `load_bgen()` function
+- **Clean separation of concerns**:
+  - Variant discovery phase: `_prepare_all_variants()`, `_prepare_region_variants()`, `_prepare_filtered_variants()`
+  - Dosage loading phase: Single `_load_dosages()` method handles all loading scenarios
+- **Benefits**:
+  - Eliminates code duplication (~100 lines removed)
+  - Clearer architecture with separated discovery and loading phases
+  - Easier to extend with new selection criteria
+  - Better testability of individual components
+- **Alpha version**: Breaking changes acceptable as this is pre-release software
 
 ## Recent Major Refactoring (January 2025)
 

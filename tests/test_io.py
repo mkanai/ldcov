@@ -72,7 +72,7 @@ class TestIO(unittest.TestCase):
             # Setup mock BGEN file
             mock_bgen_instance = mock_bgen.return_value
             mock_bgen_instance.samples = ["S1", "S2", "S3"]
-            
+
             # Create mock variants - simulating 5 variants but only wanting 2
             class MockVariant:
                 def __init__(self, rsid, chrom, pos, ref, alt):
@@ -81,7 +81,7 @@ class TestIO(unittest.TestCase):
                     self.pos = pos
                     self.alleles = [ref, alt]
                     self.alt_dosage = np.array([0.0, 1.0, 2.0])  # Mock dosages
-            
+
             mock_variants = [
                 MockVariant("rs1", "1", 100, "A", "T"),
                 MockVariant("rs2", "1", 200, "C", "G"),  # Want this one
@@ -89,13 +89,13 @@ class TestIO(unittest.TestCase):
                 MockVariant("rs4", "1", 400, "T", "A"),  # Want this one
                 MockVariant("rs5", "1", 500, "A", "C"),
             ]
-            
+
             # Make the mock iterable
             mock_bgen_instance.__iter__ = lambda self: iter(mock_variants)
-            
+
             # Create reader instance
             reader = BgenFileReader("dummy.bgen")
-            
+
             # Create variant filter
             variant_filter = {
                 "positions": [200, 400],
@@ -103,12 +103,19 @@ class TestIO(unittest.TestCase):
                 "allele1": ["C", "T"],
                 "allele2": ["G", "A"],
             }
-            
-            # Load filtered variants
-            dosages, var_info, n_samples = reader.load_filtered_variants_and_dosages(
-                variant_filter, dtype=np.float64
+
+            # Prepare filtered variants
+            filtered_variant_info, bgen_indices, indices_to_output = (
+                reader._prepare_filtered_variants(variant_filter)
             )
-            
+
+            # Load filtered variants using the unified method
+            dosages, var_info, n_samples = reader._load_dosages(
+                "filtered",
+                filtered_params=(filtered_variant_info, bgen_indices, indices_to_output),
+                dtype=np.float64,
+            )
+
             # Verify results
             self.assertEqual(dosages.shape, (3, 2))  # 3 samples, 2 variants
             self.assertEqual(len(var_info), 2)
@@ -213,7 +220,7 @@ class TestIO(unittest.TestCase):
             mock_instance = mock_reader.return_value
             mock_instance.sample_ids = ["sample1", "sample2", "sample3"]
             mock_instance.n_samples = 3
-            
+
             # Create variant filter (simulating a .z file)
             variant_filter = {
                 "chromosome": "1",
@@ -221,38 +228,47 @@ class TestIO(unittest.TestCase):
                 "rsids": ["rs2", "rs4"],
                 "allele1": ["C", "T"],
                 "allele2": ["G", "A"],
-                "z_file_order": [0, 1]
+                "z_file_order": [0, 1],
             }
-            
+
             # Mock the filtered loading method
-            filtered_dosages = np.array([
-                [1.0, 2.0],  # sample 1
-                [0.5, 1.5],  # sample 2
-                [2.0, 0.0],  # sample 3
-            ])
-            
-            filtered_variant_info = pd.DataFrame({
-                "id": ["rs2", "rs4"],
-                "chrom": ["1", "1"],
-                "pos": [200, 400],
-                "ref": ["C", "T"],
-                "alt": ["G", "A"],
-                "rsid": ["rs2", "rs4"],
-                "idx": [1, 3]
-            })
-            
-            mock_instance.load_filtered_variants_and_dosages.return_value = (
-                filtered_dosages, filtered_variant_info, 3
+            filtered_dosages = np.array(
+                [
+                    [1.0, 2.0],  # sample 1
+                    [0.5, 1.5],  # sample 2
+                    [2.0, 0.0],  # sample 3
+                ]
             )
-            
+
+            filtered_variant_info = pd.DataFrame(
+                {
+                    "id": ["rs2", "rs4"],
+                    "chrom": ["1", "1"],
+                    "pos": [200, 400],
+                    "ref": ["C", "T"],
+                    "alt": ["G", "A"],
+                    "rsid": ["rs2", "rs4"],
+                    "idx": [1, 3],
+                }
+            )
+
+            # Mock the prepare method
+            mock_instance._prepare_filtered_variants.return_value = (
+                filtered_variant_info.to_dict("records"),
+                [1, 3],
+                {1: 0, 3: 1},
+            )
+
+            # Mock the load_dosages method
+            mock_instance._load_dosages.return_value = (filtered_dosages, filtered_variant_info, 3)
+
             # Load with variant filter
             genotypes, var_info, sample_ids = load_bgen("dummy.bgen", variant_filter=variant_filter)
-            
-            # Verify the efficient method was called
-            mock_instance.load_filtered_variants_and_dosages.assert_called_once_with(
-                variant_filter, np.float64, None
-            )
-            
+
+            # Verify the methods were called
+            mock_instance._prepare_filtered_variants.assert_called_once_with(variant_filter)
+            mock_instance._load_dosages.assert_called_once()
+
             # Verify results
             self.assertEqual(genotypes.shape, (3, 2))
             self.assertEqual(len(var_info), 2)
@@ -267,30 +283,36 @@ class TestIO(unittest.TestCase):
             mock_instance = mock_reader.return_value
             mock_instance.sample_ids = ["sample1", "sample2", "sample3"]
             mock_instance.n_samples = 3
-            
+
             # Create dosages with NaN values
-            dosages_with_nan = np.array([
-                [0.0, 1.0, np.nan],  # variant 0, sample 2 has NaN
-                [2.0, np.nan, 1.0],  # variant 1, sample 1 has NaN
-                [np.nan, 0.0, 2.0],  # variant 2, sample 0 has NaN
-            ]).T  # Transpose to get samples x variants
-            
-            variant_info = pd.DataFrame({
-                "id": ["rs1", "rs2", "rs3"],
-                "chrom": ["1", "1", "1"],
-                "pos": [100, 200, 300],
-                "ref": ["A", "C", "G"],
-                "alt": ["T", "G", "A"]
-            })
-            
-            mock_instance.load_all_variants_and_dosages.return_value = (
-                dosages_with_nan, variant_info, 3
+            dosages_with_nan = np.array(
+                [
+                    [0.0, 1.0, np.nan],  # variant 0, sample 2 has NaN
+                    [2.0, np.nan, 1.0],  # variant 1, sample 1 has NaN
+                    [np.nan, 0.0, 2.0],  # variant 2, sample 0 has NaN
+                ]
+            ).T  # Transpose to get samples x variants
+
+            variant_info = pd.DataFrame(
+                {
+                    "id": ["rs1", "rs2", "rs3"],
+                    "chrom": ["1", "1", "1"],
+                    "pos": [100, 200, 300],
+                    "ref": ["A", "C", "G"],
+                    "alt": ["T", "G", "A"],
+                }
             )
-            
+
+            # Mock the prepare method
+            mock_instance._prepare_all_variants.return_value = (None, None, None)
+
+            # Mock the load_dosages method to return NaN data
+            mock_instance._load_dosages.return_value = (dosages_with_nan, variant_info, 3)
+
             # Should raise ValueError with detailed NaN information
             with self.assertRaises(ValueError) as context:
                 load_bgen("dummy.bgen")
-            
+
             self.assertIn("Genotype matrix contains NaN values", str(context.exception))
 
     # ==================== BGEN Writer Tests ====================
@@ -983,7 +1005,12 @@ class TestIO(unittest.TestCase):
             self.skipTest("Not enough samples for test")
 
         # Request some existing and some non-existing samples
-        requested_samples = [actual_sample_ids[0], "FAKE_SAMPLE_1", actual_sample_ids[1], "FAKE_SAMPLE_2"]
+        requested_samples = [
+            actual_sample_ids[0],
+            "FAKE_SAMPLE_1",
+            actual_sample_ids[1],
+            "FAKE_SAMPLE_2",
+        ]
 
         # Load with filtering
         filtered_genotypes, _, filtered_sample_ids = load_bgen(

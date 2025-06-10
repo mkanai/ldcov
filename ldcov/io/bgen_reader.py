@@ -99,6 +99,63 @@ def _normalize_chromosome(chrom: str) -> str:
     return chrom[3:] if chrom.startswith("chr") else chrom
 
 
+def _report_nan_error(
+    dosages: np.ndarray, variant_info: pd.DataFrame, sample_ids: List[str]
+) -> None:
+    """
+    Report detailed error message for NaN values in genotype matrix.
+
+    Parameters:
+    -----------
+    dosages : np.ndarray
+        Genotype dosage matrix
+    variant_info : pd.DataFrame
+        Variant information
+    sample_ids : list of str
+        Sample IDs
+
+    Raises:
+    -------
+    ValueError
+        Always raises with detailed NaN information
+    """
+    nan_mask = np.isnan(dosages)
+
+    # Count samples and variants with NaN
+    samples_with_nan = np.any(nan_mask, axis=1)
+    variants_with_nan = np.any(nan_mask, axis=0)
+    n_samples_with_nan = np.sum(samples_with_nan)
+    n_variants_with_nan = np.sum(variants_with_nan)
+
+    # Find first 5 sample/variant pairs with NaN
+    nan_locations = np.argwhere(nan_mask)[:5]
+
+    # Build detailed error message
+    error_msg = (
+        f"Genotype matrix contains NaN values:\n"
+        f"  - {n_samples_with_nan} out of {dosages.shape[0]} samples have NaN values\n"
+        f"  - {n_variants_with_nan} out of {dosages.shape[1]} variants have NaN values\n"
+    )
+
+    if len(nan_locations) > 0:
+        error_msg += "\nFirst (up to 5) sample/variant pairs with NaN:\n"
+        for i, (sample_idx, variant_idx) in enumerate(nan_locations):
+            sample_id = sample_ids[sample_idx]
+            variant_id = (
+                variant_info.iloc[variant_idx]["id"]
+                if "id" in variant_info
+                else f"variant_{variant_idx}"
+            )
+            variant_pos = (
+                variant_info.iloc[variant_idx]["pos"] if "pos" in variant_info else "unknown"
+            )
+            error_msg += f"  {i+1}. Sample '{sample_id}' (index {sample_idx}), Variant '{variant_id}' at position {variant_pos} (index {variant_idx})\n"
+
+    error_msg += "\nThis may indicate issues with the input BGEN file or variant filtering."
+
+    raise ValueError(error_msg)
+
+
 class BgenFileReader:
     """
     Reader for BGEN format files with support for indexed access.
@@ -239,217 +296,115 @@ class BgenFileReader:
 
         return indices, filtered_ids
 
-    def load_all_variants_and_dosages(
-        self, dtype: np.dtype = np.float64, sample_indices: Optional[List[int]] = None
-    ) -> Tuple[np.ndarray, pd.DataFrame, int]:
+    def _determine_n_samples_out(
+        self, sample_indices: Optional[List[int]], log: bool = True
+    ) -> int:
+        """Determine output number of samples based on filtering."""
+        if sample_indices is not None:
+            n_samples_out = len(sample_indices)
+            if log:
+                logger.info(
+                    f"Loading variants with {n_samples_out} samples (filtered from {self.n_samples})"
+                )
+        else:
+            n_samples_out = self.n_samples
+            if log:
+                logger.info(f"Loading variants with {self.n_samples} samples")
+        return n_samples_out
+
+    def _process_variant_dosage(
+        self,
+        variant,
+        idx: int,
+        dosages: np.ndarray,
+        col_idx: int,
+        sample_indices: Optional[List[int]] = None,
+    ) -> None:
         """
-        Load all variants and their dosages in a single efficient pass.
+        Process a single variant's dosage and store it in the dosages array.
 
         Parameters:
         -----------
-        dtype : numpy.dtype, optional
-            Data type for the dosage array (default: np.float64)
+        variant : bgen variant object
+            Variant to process
+        idx : int
+            Original variant index
+        dosages : np.ndarray
+            Output array to store dosages
+        col_idx : int
+            Column index in output array
         sample_indices : list of int, optional
-            Indices of samples to keep. If None, all samples are kept.
+            Sample indices to filter
+        """
+        try:
+            dosage = _compute_dosage_from_variant(variant)
+
+            # Filter samples and assign to column
+            if sample_indices is not None:
+                dosages[:, col_idx] = dosage[sample_indices]
+            else:
+                dosages[:, col_idx] = dosage
+        except Exception as e:
+            logger.warning(f"Error computing dosage for variant {idx} ({variant.rsid}): {e}")
+            dosages[:, col_idx] = np.nan
+
+    def _empty_result(
+        self, n_samples_out: int, dtype: np.dtype
+    ) -> Tuple[np.ndarray, pd.DataFrame, int]:
+        """Return empty result arrays."""
+        return np.zeros((n_samples_out, 0), dtype=dtype), pd.DataFrame(), n_samples_out
+
+    def _prepare_all_variants(self) -> Tuple[Optional[int], None, None]:
+        """
+        Prepare to load all variants.
 
         Returns:
         --------
         tuple
-            (dosages, variant_info, n_samples) where n_samples is the number of samples
-            in the returned dosage matrix
+            (variant_count, None, None) - for all variants we just need the count
         """
-        if sample_indices is not None:
-            logger.info(
-                f"Loading variants with {len(sample_indices)} samples (filtered from {self.n_samples})"
-            )
-            n_samples_out = len(sample_indices)
-        else:
-            logger.info(f"Loading all variants with {self.n_samples} samples")
-            n_samples_out = self.n_samples
-
-        # Count variants first (if possible) for pre-allocation
-        # Note: This requires iterating twice, but saves memory and is faster overall
         try:
-            # Try to get variant count efficiently
             variant_count = sum(1 for _ in self.bgen_file)
             self._open_bgen()  # Re-open to reset iterator
-            logger.debug(f"Pre-allocating arrays for {variant_count} variants")
+            return variant_count, None, None
+        except:
+            return None, None, None
 
-            # Pre-allocate arrays
-            dosages = np.empty((n_samples_out, variant_count), dtype=dtype)
-            variant_info_list = []
-
-            # Load data directly into pre-allocated array
-            for i, variant in enumerate(self.bgen_file):
-                # Extract variant info
-                variant_info_list.append(_extract_variant_info(variant, i))
-
-                # Compute dosage
-                try:
-                    dosage = _compute_dosage_from_variant(variant)
-
-                    # Filter samples and assign directly to column
-                    if sample_indices is not None:
-                        dosages[:, i] = dosage[sample_indices]
-                    else:
-                        dosages[:, i] = dosage
-                except Exception as e:
-                    logger.warning(f"Error computing dosage for variant {i} ({variant.rsid}): {e}")
-                    dosages[:, i] = np.nan
-
-        except Exception:
-            # Fallback to original implementation if counting fails
-            logger.debug("Could not pre-count variants, using list-based approach")
-            variant_info_list = []
-            dosages_list = []
-
-            for i, variant in enumerate(self.bgen_file):
-                # Extract variant info
-                variant_info_list.append(_extract_variant_info(variant, i))
-
-                # Compute dosage
-                try:
-                    dosage = _compute_dosage_from_variant(variant)
-
-                    # Filter samples immediately if indices provided
-                    if sample_indices is not None:
-                        dosage = dosage[sample_indices]
-
-                    dosages_list.append(dosage)
-                except Exception as e:
-                    logger.warning(f"Error computing dosage for variant {i} ({variant.rsid}): {e}")
-                    dosages_list.append(np.full(n_samples_out, np.nan, dtype=dtype))
-
-            if not variant_info_list:
-                return np.zeros((n_samples_out, 0), dtype=dtype), pd.DataFrame(), n_samples_out
-
-            # Convert to arrays
-            dosages = np.column_stack(dosages_list).astype(dtype)
-
-        variant_info = pd.DataFrame(variant_info_list)
-        return dosages, variant_info, n_samples_out
-
-    def load_region_variants_and_dosages(
-        self,
-        chrom: str,
-        start_pos: int,
-        end_pos: int,
-        dtype: np.dtype = np.float64,
-        sample_indices: Optional[List[int]] = None,
-    ) -> Tuple[np.ndarray, pd.DataFrame, int]:
+    def _prepare_region_variants(
+        self, chrom: str, start_pos: int, end_pos: int
+    ) -> Tuple[str, Tuple[int, int], None]:
         """
-        Load variants and dosages for a specific genomic region.
-
-        Parameters:
-        -----------
-        chrom : str
-            Chromosome
-        start_pos : int
-            Start position
-        end_pos : int
-            End position
-        dtype : numpy.dtype, optional
-            Data type for the dosage array (default: np.float64)
-        sample_indices : list of int, optional
-            Indices of samples to keep. If None, all samples are kept.
+        Prepare to load variants from a region.
 
         Returns:
         --------
         tuple
-            (dosages, variant_info, n_samples) where n_samples is the number of samples
-            in the returned dosage matrix
+            (normalized_chrom, (start_pos, end_pos), None)
         """
-        try:
-            search_chrom = _normalize_chromosome(chrom)
-            variants_in_region = list(self.bgen_file.fetch(search_chrom, start_pos, end_pos))
+        search_chrom = _normalize_chromosome(chrom)
+        return search_chrom, (start_pos, end_pos), None
 
-            if sample_indices is not None:
-                n_samples_out = len(sample_indices)
-            else:
-                n_samples_out = self.n_samples
-
-            if not variants_in_region:
-                logger.warning(f"No variants found in region {chrom}:{start_pos}-{end_pos}")
-                return np.zeros((n_samples_out, 0), dtype=dtype), pd.DataFrame(), n_samples_out
-
-            # Pre-allocate arrays now that we know the count
-            n_variants = len(variants_in_region)
-            dosages = np.empty((n_samples_out, n_variants), dtype=dtype)
-            variant_info_list = []
-
-            for i, variant in enumerate(variants_in_region):
-                # Extract variant info
-                variant_info_list.append(_extract_variant_info(variant, i))
-
-                # Compute dosage
-                try:
-                    dosage = _compute_dosage_from_variant(variant)
-
-                    # Filter samples and assign directly to column
-                    if sample_indices is not None:
-                        dosages[:, i] = dosage[sample_indices]
-                    else:
-                        dosages[:, i] = dosage
-                except Exception as e:
-                    logger.warning(f"Error computing dosage for variant {i} ({variant.rsid}): {e}")
-                    dosages[:, i] = np.nan
-
-            variant_info = pd.DataFrame(variant_info_list)
-            return dosages, variant_info, n_samples_out
-
-        except Exception as e:
-            logger.error(f"Error loading region {chrom}:{start_pos}-{end_pos}: {e}")
-            return np.zeros((n_samples_out, 0), dtype=dtype), pd.DataFrame(), n_samples_out
-
-    def load_filtered_variants_and_dosages(
-        self,
-        variant_filter: Dict[str, Any],
-        dtype: np.dtype = np.float64,
-        sample_indices: Optional[List[int]] = None,
-    ) -> Tuple[np.ndarray, pd.DataFrame, int]:
+    def _prepare_filtered_variants(
+        self, variant_filter: Dict[str, Any]
+    ) -> Tuple[List[Dict[str, Any]], List[int], Dict[int, int]]:
         """
-        Load only the variants specified in the variant filter.
-
-        This is more efficient than loading all variants and then filtering,
-        especially for large BGEN files where only a subset is needed.
-
-        Parameters:
-        -----------
-        variant_filter : dict
-            Filter dictionary from create_variant_filter_from_z() containing:
-            - positions: list of positions to extract
-            - rsids: list of rsids
-            - allele1/allele2: alleles for matching
-        dtype : numpy.dtype, optional
-            Data type for the dosage array (default: np.float64)
-        sample_indices : list of int, optional
-            Indices of samples to keep. If None, all samples are kept.
+        Prepare to load filtered variants.
 
         Returns:
         --------
         tuple
-            (dosages, variant_info, n_samples) where dosages and variant_info
-            are already filtered and ordered according to the z file
+            (filtered_variant_info, bgen_indices, indices_to_output)
         """
-        if sample_indices is not None:
-            logger.info(
-                f"Loading filtered variants with {len(sample_indices)} samples (filtered from {self.n_samples})"
-            )
-            n_samples_out = len(sample_indices)
-        else:
-            logger.info(f"Loading filtered variants with {self.n_samples} samples")
-            n_samples_out = self.n_samples
-
         # First pass: collect variant info to find matches
         logger.info("First pass: scanning for variants matching filter...")
-        variant_info_list = []
-        variant_to_bgen_idx = {}  # Maps (pos, alleles) to BGEN index
-        rsid_to_bgen_idx = {}     # Maps rsid to BGEN index as fallback
+        all_variant_info = []
+        variant_to_bgen_idx = {}
+        rsid_to_bgen_idx = {}
 
         for i, variant in enumerate(self.bgen_file):
             var_info = _extract_variant_info(variant, i)
-            variant_info_list.append(var_info)
-            
+            all_variant_info.append(var_info)
+
             # Create lookup keys
             alleles_sorted = tuple(sorted([var_info["ref"], var_info["alt"]]))
             key = (var_info["pos"], alleles_sorted)
@@ -457,71 +412,158 @@ class BgenFileReader:
             rsid_to_bgen_idx[var_info["id"]] = i
 
         # Find which variants from filter are in BGEN
-        matches = []  # List of (z_idx, bgen_idx) tuples
-        z_variant_lookup = {}
-        
-        # Build lookup from z filter
+        matches = []
+
         for z_idx, (pos, a1, a2, rsid) in enumerate(
-            zip(variant_filter["positions"], variant_filter["allele1"], 
-                variant_filter["allele2"], variant_filter["rsids"])
+            zip(
+                variant_filter["positions"],
+                variant_filter["allele1"],
+                variant_filter["allele2"],
+                variant_filter["rsids"],
+            )
         ):
             alleles_sorted = tuple(sorted([a1, a2]))
             key = (pos, alleles_sorted)
-            
-            # Try position+alleles match first
+
             if key in variant_to_bgen_idx:
                 matches.append((z_idx, variant_to_bgen_idx[key]))
-            # Fallback to rsid match
             elif rsid in rsid_to_bgen_idx:
                 matches.append((z_idx, rsid_to_bgen_idx[rsid]))
 
         if not matches:
             raise ValueError("No variants from filter found in BGEN file")
 
-        logger.info(f"Found {len(matches)} out of {len(variant_filter['positions'])} variants from filter")
+        logger.info(
+            f"Found {len(matches)} out of {len(variant_filter['positions'])} variants from filter"
+        )
 
         # Sort matches by z_idx to maintain order
         matches.sort(key=lambda x: x[0])
         z_indices, bgen_indices = zip(*matches)
 
-        # Second pass: load only the matched variants
-        logger.info("Second pass: loading dosages for matched variants...")
-        self._open_bgen()  # Re-open to reset iterator
+        # Get filtered variant info in correct order
+        filtered_variant_info = [all_variant_info[idx] for idx in bgen_indices]
 
-        # Pre-allocate arrays for matched variants only
-        n_matched = len(matches)
-        dosages = np.empty((n_samples_out, n_matched), dtype=dtype)
-        final_variant_info = []
-        
-        # Create a set of BGEN indices we need for efficient lookup
-        bgen_indices_set = set(bgen_indices)
-        bgen_idx_to_output_idx = {bgen_idx: out_idx for out_idx, bgen_idx in enumerate(bgen_indices)}
+        # Create mapping for quick lookup
+        indices_to_output = {idx: i for i, idx in enumerate(bgen_indices)}
 
-        for i, variant in enumerate(self.bgen_file):
-            if i in bgen_indices_set:
-                output_idx = bgen_idx_to_output_idx[i]
-                
-                # Extract variant info
-                final_variant_info.append(variant_info_list[i])
-                
-                # Compute dosage
-                try:
+        self._open_bgen()  # Reset for second pass
+
+        return filtered_variant_info, list(bgen_indices), indices_to_output
+
+    def _load_dosages(
+        self,
+        loading_mode: str,
+        variant_count: Optional[int] = None,
+        region_params: Optional[Tuple[str, Tuple[int, int]]] = None,
+        filtered_params: Optional[Tuple[List[Dict], List[int], Dict[int, int]]] = None,
+        dtype: np.dtype = np.float64,
+        sample_indices: Optional[List[int]] = None,
+    ) -> Tuple[np.ndarray, pd.DataFrame, int]:
+        """
+        Unified method to load dosages based on loading mode.
+
+        Parameters:
+        -----------
+        loading_mode : str
+            'all', 'region', or 'filtered'
+        variant_count : int, optional
+            For 'all' mode - number of variants
+        region_params : tuple, optional
+            For 'region' mode - (search_chrom, (start_pos, end_pos))
+        filtered_params : tuple, optional
+            For 'filtered' mode - (variant_info, indices, mapping)
+        dtype : numpy.dtype
+            Data type for dosages
+        sample_indices : list of int, optional
+            Sample filtering
+        """
+        n_samples_out = self._determine_n_samples_out(sample_indices)
+
+        if loading_mode == "all":
+            # Load all variants
+            if variant_count is not None:
+                # Pre-allocated approach
+                logger.debug(f"Pre-allocating arrays for {variant_count} variants")
+                dosages = np.empty((n_samples_out, variant_count), dtype=dtype)
+                variant_info_list = []
+
+                for i, variant in enumerate(self.bgen_file):
+                    variant_info_list.append(_extract_variant_info(variant, i))
+                    self._process_variant_dosage(variant, i, dosages, i, sample_indices)
+
+                variant_info = pd.DataFrame(variant_info_list)
+                return dosages, variant_info, n_samples_out
+            else:
+                # Fallback approach
+                logger.debug("Using fallback approach without pre-allocation")
+                dosage_list = []
+                variant_info_list = []
+
+                for i, variant in enumerate(self.bgen_file):
+                    variant_info_list.append(_extract_variant_info(variant, i))
+
                     dosage = _compute_dosage_from_variant(variant)
-                    
-                    # Filter samples and assign to correct position
                     if sample_indices is not None:
-                        dosages[:, output_idx] = dosage[sample_indices]
-                    else:
-                        dosages[:, output_idx] = dosage
-                except Exception as e:
-                    logger.warning(f"Error computing dosage for variant {i} ({variant.rsid}): {e}")
-                    dosages[:, output_idx] = np.nan
+                        dosage = dosage[sample_indices]
+                    dosage_list.append(dosage)
 
-        # Create variant info DataFrame
-        variant_info_df = pd.DataFrame(final_variant_info)
-        
-        logger.info(f"Loaded {dosages.shape[1]} variants in z-file order")
-        return dosages, variant_info_df, n_samples_out
+                if not dosage_list:
+                    return self._empty_result(n_samples_out, dtype)
+
+                dosages = np.column_stack(dosage_list).astype(dtype)
+                variant_info = pd.DataFrame(variant_info_list)
+                return dosages, variant_info, n_samples_out
+
+        elif loading_mode == "region":
+            # Load region variants
+            search_chrom, (start_pos, end_pos) = region_params
+            logger.debug(f"Loading variants from region {search_chrom}:{start_pos}-{end_pos}")
+
+            variants_in_region = list(self.bgen_file.fetch(search_chrom, start_pos, end_pos))
+
+            if not variants_in_region:
+                logger.warning(f"No variants found in region {search_chrom}:{start_pos}-{end_pos}")
+                return self._empty_result(n_samples_out, dtype)
+
+            # Pre-allocate arrays
+            n_variants = len(variants_in_region)
+            dosages = np.empty((n_samples_out, n_variants), dtype=dtype)
+            variant_info_list = []
+
+            # Process variants
+            for i, variant in enumerate(variants_in_region):
+                variant_info_list.append(_extract_variant_info(variant, i))
+                self._process_variant_dosage(variant, i, dosages, i, sample_indices)
+
+            variant_info = pd.DataFrame(variant_info_list)
+            return dosages, variant_info, n_samples_out
+
+        elif loading_mode == "filtered":
+            # Load filtered variants
+            filtered_variant_info, bgen_indices, indices_to_output = filtered_params
+
+            logger.info("Second pass: loading dosages for matched variants...")
+
+            # Pre-allocate arrays
+            n_variants = len(bgen_indices)
+            dosages = np.empty((n_samples_out, n_variants), dtype=dtype)
+
+            # Process only the variants we need
+            for i, variant in enumerate(self.bgen_file):
+                if i in indices_to_output:
+                    output_idx = indices_to_output[i]
+                    self._process_variant_dosage(variant, i, dosages, output_idx, sample_indices)
+
+                    # Stop if we've processed all needed variants
+                    if output_idx == n_variants - 1:
+                        break
+
+            variant_info = pd.DataFrame(filtered_variant_info)
+            return dosages, variant_info, n_samples_out
+
+        else:
+            raise ValueError(f"Unknown loading mode: {loading_mode}")
 
     def __del__(self):
         """Clean up when object is deleted."""
@@ -590,27 +632,48 @@ def load_bgen(
                 logger.info(f"Found {len(sample_indices)} of {len(sample_ids)} requested samples")
 
         if variant_filter is not None:
-            # Load only the variants specified in .z file (more efficient)
+            # Prepare filtered variants
             logger.info("Loading filtered variants matching .z file")
-            dosages, variant_info, n_samples = bgen_reader.load_filtered_variants_and_dosages(
-                variant_filter, dtype, sample_indices
+            filtered_variant_info, bgen_indices, indices_to_output = (
+                bgen_reader._prepare_filtered_variants(variant_filter)
+            )
+
+            # Load dosages
+            dosages, variant_info, n_samples = bgen_reader._load_dosages(
+                "filtered",
+                filtered_params=(filtered_variant_info, bgen_indices, indices_to_output),
+                dtype=dtype,
+                sample_indices=sample_indices,
             )
 
         elif region is not None:
-            # Parse region string and load specific region
+            # Parse region string
             from ..utils.region_utils import parse_region
 
             chrom, pos_range = parse_region(region)
             start_pos, end_pos = pos_range
             logger.info(f"Loading region: {chrom}:{start_pos}-{end_pos}")
 
-            dosages, variant_info, n_samples = bgen_reader.load_region_variants_and_dosages(
-                chrom, start_pos, end_pos, dtype, sample_indices
+            # Prepare region parameters
+            search_chrom, region_bounds, _ = bgen_reader._prepare_region_variants(
+                chrom, start_pos, end_pos
+            )
+
+            # Load dosages
+            dosages, variant_info, n_samples = bgen_reader._load_dosages(
+                "region",
+                region_params=(search_chrom, region_bounds),
+                dtype=dtype,
+                sample_indices=sample_indices,
             )
         else:
-            # Load all variants and dosages in one efficient pass
-            dosages, variant_info, n_samples = bgen_reader.load_all_variants_and_dosages(
-                dtype, sample_indices
+            # Prepare all variants
+            logger.info("Loading all variants from BGEN file")
+            variant_count, _, _ = bgen_reader._prepare_all_variants()
+
+            # Load dosages
+            dosages, variant_info, n_samples = bgen_reader._load_dosages(
+                "all", variant_count=variant_count, dtype=dtype, sample_indices=sample_indices
             )
 
         # Check if we loaded any variants
@@ -623,48 +686,11 @@ def load_bgen(
                 "3) Issues with the BGEN file format"
             )
 
-        # Validate genotype data type and check for NaN values
-        # Genotypes should be float32 or float64 from the loader
-        assert np.issubdtype(
-            dosages.dtype, np.floating
-        ), "Genotypes must be floating point for standardization"
+        # Validate genotypes
+        assert np.issubdtype(dosages.dtype, np.floating), "Genotypes must be floating point"
 
-        # Check for NaN values in genotypes
         if np.any(np.isnan(dosages)):
-            # Get detailed information about NaN locations
-            nan_mask = np.isnan(dosages)
-            
-            # Count samples and variants with NaN
-            samples_with_nan = np.any(nan_mask, axis=1)
-            variants_with_nan = np.any(nan_mask, axis=0)
-            n_samples_with_nan = np.sum(samples_with_nan)
-            n_variants_with_nan = np.sum(variants_with_nan)
-            
-            # Get indices of samples and variants with NaN
-            sample_indices_with_nan = np.where(samples_with_nan)[0]
-            variant_indices_with_nan = np.where(variants_with_nan)[0]
-            
-            # Find first 5 sample/variant pairs with NaN
-            nan_locations = np.argwhere(nan_mask)[:5]
-            
-            # Build detailed error message
-            error_msg = (
-                f"Genotype matrix contains NaN values:\n"
-                f"  - {n_samples_with_nan} out of {dosages.shape[0]} samples have NaN values\n"
-                f"  - {n_variants_with_nan} out of {dosages.shape[1]} variants have NaN values\n"
-            )
-            
-            if len(nan_locations) > 0:
-                error_msg += "\nFirst (up to 5) sample/variant pairs with NaN:\n"
-                for i, (sample_idx, variant_idx) in enumerate(nan_locations):
-                    sample_id = filtered_sample_ids[sample_idx]
-                    variant_id = variant_info.iloc[variant_idx]['id'] if 'id' in variant_info else f"variant_{variant_idx}"
-                    variant_pos = variant_info.iloc[variant_idx]['pos'] if 'pos' in variant_info else "unknown"
-                    error_msg += f"  {i+1}. Sample '{sample_id}' (index {sample_idx}), Variant '{variant_id}' at position {variant_pos} (index {variant_idx})\n"
-            
-            error_msg += "\nThis may indicate issues with the input BGEN file or variant filtering."
-            
-            raise ValueError(error_msg)
+            _report_nan_error(dosages, variant_info, filtered_sample_ids)
 
         return dosages, variant_info, filtered_sample_ids
 

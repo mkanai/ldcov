@@ -98,14 +98,17 @@ class TestCovariate(unittest.TestCase):
     def test_standardize_genotypes_with_missing(self):
         """Test that standardization handles NaN values (now checked at load time)."""
         genotypes = np.array(
-            [[0, 1, 2, np.nan], [1, np.nan, 1, 1], [2, 1, 0, 2], [np.nan, 2, 1, 0]], dtype=np.float64
+            [[0, 1, 2, np.nan], [1, np.nan, 1, 1], [2, 1, 0, 2], [np.nan, 2, 1, 0]],
+            dtype=np.float64,
         )
 
         # NaN check has been moved to the BGEN loader, so standardize_genotypes
         # no longer validates for NaN. It will process the data as-is.
         # This test now verifies that the function handles NaN mathematically
-        std_geno, means, norms = standardize_genotypes(genotypes, center=True, scale=True, inplace=False)
-        
+        std_geno, means, norms = standardize_genotypes(
+            genotypes, center=True, scale=True, inplace=False
+        )
+
         # Check that NaN values are propagated
         self.assertTrue(np.isnan(std_geno[0, 3]))
         self.assertTrue(np.isnan(std_geno[1, 1]))
@@ -175,9 +178,7 @@ class TestCovariate(unittest.TestCase):
 
         # Pre-compute Q matrix from QR decomposition
         covar_matrix = covariates.values
-        Q, _ = np.linalg.qr(
-            np.column_stack([np.ones(n_samples), covar_matrix]), mode="reduced"
-        )
+        Q, _ = np.linalg.qr(np.column_stack([np.ones(n_samples), covar_matrix]), mode="reduced")
 
         # Regress using projection matrix
         adjusted = regress_out_covariates(genotypes.copy(), projection_matrix_Q=Q)
@@ -393,19 +394,19 @@ class TestCovariate(unittest.TestCase):
         # Use a smaller subset of genotypes for more reliable testing
         test_genotypes = self.genotypes[:100, :5].copy()  # 100 samples, 5 variants
         test_sample_ids = self.sample_ids[:100]
-        
+
         # Create test covariate file with stronger effects
         n_samples = len(test_sample_ids)
         np.random.seed(42)
-        
+
         # Create covariates that have stronger association with genotypes
         pc1 = np.random.normal(0, 1, n_samples)
         pc2 = np.random.normal(0, 1, n_samples)
-        
+
         # Add covariate effects to genotypes to ensure adjustment will have an effect
         test_genotypes[:, 0] += 0.5 * pc1  # Add PC1 effect to first variant
         test_genotypes[:, 1] += 0.3 * pc2  # Add PC2 effect to second variant
-        
+
         covariates = pd.DataFrame(
             {
                 "IID": test_sample_ids,
@@ -435,9 +436,11 @@ class TestCovariate(unittest.TestCase):
         # The adjusted genotypes should be different from the original
         diff = np.abs(adjusted_geno - std_geno).max()
         self.assertGreater(diff, 1e-10, "Adjustment should modify the genotypes")
-        
+
         # Also check that the adjustment is not trivial (not just zeros)
-        self.assertGreater(np.abs(adjusted_geno).max(), 1e-10, "Adjusted genotypes should not be all zeros")
+        self.assertGreater(
+            np.abs(adjusted_geno).max(), 1e-10, "Adjusted genotypes should not be all zeros"
+        )
 
 
 if __name__ == "__main__":
