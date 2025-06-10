@@ -401,6 +401,128 @@ class BgenFileReader:
             logger.error(f"Error loading region {chrom}:{start_pos}-{end_pos}: {e}")
             return np.zeros((n_samples_out, 0), dtype=dtype), pd.DataFrame(), n_samples_out
 
+    def load_filtered_variants_and_dosages(
+        self,
+        variant_filter: Dict[str, Any],
+        dtype: np.dtype = np.float64,
+        sample_indices: Optional[List[int]] = None,
+    ) -> Tuple[np.ndarray, pd.DataFrame, int]:
+        """
+        Load only the variants specified in the variant filter.
+
+        This is more efficient than loading all variants and then filtering,
+        especially for large BGEN files where only a subset is needed.
+
+        Parameters:
+        -----------
+        variant_filter : dict
+            Filter dictionary from create_variant_filter_from_z() containing:
+            - positions: list of positions to extract
+            - rsids: list of rsids
+            - allele1/allele2: alleles for matching
+        dtype : numpy.dtype, optional
+            Data type for the dosage array (default: np.float64)
+        sample_indices : list of int, optional
+            Indices of samples to keep. If None, all samples are kept.
+
+        Returns:
+        --------
+        tuple
+            (dosages, variant_info, n_samples) where dosages and variant_info
+            are already filtered and ordered according to the z file
+        """
+        if sample_indices is not None:
+            logger.info(
+                f"Loading filtered variants with {len(sample_indices)} samples (filtered from {self.n_samples})"
+            )
+            n_samples_out = len(sample_indices)
+        else:
+            logger.info(f"Loading filtered variants with {self.n_samples} samples")
+            n_samples_out = self.n_samples
+
+        # First pass: collect variant info to find matches
+        logger.info("First pass: scanning for variants matching filter...")
+        variant_info_list = []
+        variant_to_bgen_idx = {}  # Maps (pos, alleles) to BGEN index
+        rsid_to_bgen_idx = {}     # Maps rsid to BGEN index as fallback
+
+        for i, variant in enumerate(self.bgen_file):
+            var_info = _extract_variant_info(variant, i)
+            variant_info_list.append(var_info)
+            
+            # Create lookup keys
+            alleles_sorted = tuple(sorted([var_info["ref"], var_info["alt"]]))
+            key = (var_info["pos"], alleles_sorted)
+            variant_to_bgen_idx[key] = i
+            rsid_to_bgen_idx[var_info["id"]] = i
+
+        # Find which variants from filter are in BGEN
+        matches = []  # List of (z_idx, bgen_idx) tuples
+        z_variant_lookup = {}
+        
+        # Build lookup from z filter
+        for z_idx, (pos, a1, a2, rsid) in enumerate(
+            zip(variant_filter["positions"], variant_filter["allele1"], 
+                variant_filter["allele2"], variant_filter["rsids"])
+        ):
+            alleles_sorted = tuple(sorted([a1, a2]))
+            key = (pos, alleles_sorted)
+            
+            # Try position+alleles match first
+            if key in variant_to_bgen_idx:
+                matches.append((z_idx, variant_to_bgen_idx[key]))
+            # Fallback to rsid match
+            elif rsid in rsid_to_bgen_idx:
+                matches.append((z_idx, rsid_to_bgen_idx[rsid]))
+
+        if not matches:
+            raise ValueError("No variants from filter found in BGEN file")
+
+        logger.info(f"Found {len(matches)} out of {len(variant_filter['positions'])} variants from filter")
+
+        # Sort matches by z_idx to maintain order
+        matches.sort(key=lambda x: x[0])
+        z_indices, bgen_indices = zip(*matches)
+
+        # Second pass: load only the matched variants
+        logger.info("Second pass: loading dosages for matched variants...")
+        self._open_bgen()  # Re-open to reset iterator
+
+        # Pre-allocate arrays for matched variants only
+        n_matched = len(matches)
+        dosages = np.empty((n_samples_out, n_matched), dtype=dtype)
+        final_variant_info = []
+        
+        # Create a set of BGEN indices we need for efficient lookup
+        bgen_indices_set = set(bgen_indices)
+        bgen_idx_to_output_idx = {bgen_idx: out_idx for out_idx, bgen_idx in enumerate(bgen_indices)}
+
+        for i, variant in enumerate(self.bgen_file):
+            if i in bgen_indices_set:
+                output_idx = bgen_idx_to_output_idx[i]
+                
+                # Extract variant info
+                final_variant_info.append(variant_info_list[i])
+                
+                # Compute dosage
+                try:
+                    dosage = _compute_dosage_from_variant(variant)
+                    
+                    # Filter samples and assign to correct position
+                    if sample_indices is not None:
+                        dosages[:, output_idx] = dosage[sample_indices]
+                    else:
+                        dosages[:, output_idx] = dosage
+                except Exception as e:
+                    logger.warning(f"Error computing dosage for variant {i} ({variant.rsid}): {e}")
+                    dosages[:, output_idx] = np.nan
+
+        # Create variant info DataFrame
+        variant_info_df = pd.DataFrame(final_variant_info)
+        
+        logger.info(f"Loaded {dosages.shape[1]} variants in z-file order")
+        return dosages, variant_info_df, n_samples_out
+
     def __del__(self):
         """Clean up when object is deleted."""
         self.close()
@@ -468,29 +590,11 @@ def load_bgen(
                 logger.info(f"Found {len(sample_indices)} of {len(sample_ids)} requested samples")
 
         if variant_filter is not None:
-            # Load variants specified in .z file
-            from ..utils.variant_filter import validate_variants_match_z_file
-
-            # First load all variants to find matches with .z file
-            logger.info("Loading all variants to match with .z file filter")
-            dosages, variant_info, n_samples = bgen_reader.load_all_variants_and_dosages(
-                dtype, sample_indices
+            # Load only the variants specified in .z file (more efficient)
+            logger.info("Loading filtered variants matching .z file")
+            dosages, variant_info, n_samples = bgen_reader.load_filtered_variants_and_dosages(
+                variant_filter, dtype, sample_indices
             )
-
-            # Find matching variants and get mapping indices
-            bgen_indices, z_indices = validate_variants_match_z_file(variant_info, variant_filter)
-
-            # Subset and reorder according to .z file
-            filtered_dosages = dosages[:, bgen_indices]
-            filtered_variant_info = variant_info.iloc[bgen_indices].copy()
-
-            # Reorder to match .z file order
-            z_order = np.argsort(z_indices)  # Get indices that would sort z_indices
-            final_dosages = filtered_dosages[:, z_order]
-            final_variant_info = filtered_variant_info.iloc[z_order].reset_index(drop=True)
-
-            logger.info(f"Filtered to {final_dosages.shape[1]} variants matching .z file order")
-            return final_dosages, final_variant_info, filtered_sample_ids
 
         elif region is not None:
             # Parse region string and load specific region

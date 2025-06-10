@@ -165,6 +165,15 @@ As of January 2025:
   - Helps users quickly identify problematic data in BGEN files
 - **Updated tests** to reflect the validation change
 
+### Efficient Variant Filtering
+- **Optimized variant filtering**: When using a `.z` file filter, only the requested variants are loaded
+- **New method** `load_filtered_variants_and_dosages()` in BgenFileReader:
+  - Two-pass approach: first pass identifies matching variants, second pass loads only those variants
+  - Significantly reduces memory usage and improves performance for large BGEN files
+  - Maintains correct ordering according to `.z` file specification
+- **Previous behavior**: Loaded all variants then filtered (inefficient for large files)
+- **New behavior**: Loads only the filtered variants (efficient for any file size)
+
 ## Recent Major Refactoring (January 2025)
 
 ### What was changed:
