@@ -34,6 +34,7 @@ def load_and_adjust_genotypes(
     z_file: Optional[str] = None,
     covariate_id_col: str = "IID",
     covariate_cols: Optional[List[str]] = None,
+    show_progress: bool = True,
 ) -> Tuple[np.ndarray, pd.DataFrame, List[str], np.ndarray, np.ndarray]:
     """
     Load genotypes, standardize them, and optionally adjust for covariates.
@@ -59,6 +60,8 @@ def load_and_adjust_genotypes(
         Column name for sample IDs in covariate file (default: "IID")
     covariate_cols : list of str, optional
         Specific columns to use as covariates. If None, all columns except ID are used
+    show_progress : bool, optional
+        Whether to show progress bars during loading (default: True)
 
     Returns:
     --------
@@ -127,6 +130,7 @@ def load_and_adjust_genotypes(
         region=region,
         variant_filter=variant_filter,
         sample_ids=samples_to_load,
+        show_progress=show_progress,
     )
 
     # Standardize genotypes

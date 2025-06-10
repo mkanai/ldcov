@@ -233,7 +233,7 @@ As of January 2025:
    - Modules can be imported separately for external use
 
 7. **Dependencies**:
-   - Core: numpy, pandas, bgen, gcsfs
+   - Core: numpy, pandas, bgen, gcsfs, tqdm
    - Dev: pytest, pytest-cov, black, flake8
    - Note: gcsfs enables gs:// paths for covariate files only (not BGEN)
 

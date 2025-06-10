@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from typing import Optional, List, Tuple, Dict, Any, Union
 import logging
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +163,8 @@ class BgenFileReader:
     """
 
     def __init__(
-        self, file_path: str, index_path: Optional[str] = None, sample_path: Optional[str] = None
+        self, file_path: str, index_path: Optional[str] = None, sample_path: Optional[str] = None,
+        show_progress: bool = True
     ):
         """
         Initialize BGEN reader.
@@ -175,10 +177,13 @@ class BgenFileReader:
             Path to BGI index file (will use file_path + '.bgi' if not provided)
         sample_path : str, optional
             Path to sample file
+        show_progress : bool, optional
+            Whether to show progress bars (default: True)
         """
         self.file_path = file_path
         self.index_path = index_path
         self.sample_path = sample_path
+        self.show_progress = show_progress
 
         # Check if bgen module is available
         if not BGEN_AVAILABLE:
@@ -364,7 +369,11 @@ class BgenFileReader:
             (variant_count, None, None) - for all variants we just need the count
         """
         try:
-            variant_count = sum(1 for _ in self.bgen_file)
+            logger.info("Counting variants...")
+            if self.show_progress:
+                variant_count = sum(1 for _ in tqdm(self.bgen_file, desc="Counting variants", unit="variants"))
+            else:
+                variant_count = sum(1 for _ in self.bgen_file)
             self._open_bgen()  # Re-open to reset iterator
             return variant_count, None, None
         except:
@@ -401,7 +410,8 @@ class BgenFileReader:
         variant_to_bgen_idx = {}
         rsid_to_bgen_idx = {}
 
-        for i, variant in enumerate(self.bgen_file):
+        iterator = tqdm(self.bgen_file, desc="Scanning variants", unit="variants") if self.show_progress else self.bgen_file
+        for i, variant in enumerate(iterator):
             var_info = _extract_variant_info(variant, i)
             all_variant_info.append(var_info)
 
@@ -488,7 +498,8 @@ class BgenFileReader:
                 dosages = np.empty((n_samples_out, variant_count), dtype=dtype)
                 variant_info_list = []
 
-                for i, variant in enumerate(self.bgen_file):
+                iterator = tqdm(self.bgen_file, total=variant_count, desc="Loading variants", unit="variants") if self.show_progress else self.bgen_file
+                for i, variant in enumerate(iterator):
                     variant_info_list.append(_extract_variant_info(variant, i))
                     self._process_variant_dosage(variant, i, dosages, i, sample_indices)
 
@@ -500,7 +511,8 @@ class BgenFileReader:
                 dosage_list = []
                 variant_info_list = []
 
-                for i, variant in enumerate(self.bgen_file):
+                iterator = tqdm(self.bgen_file, desc="Loading variants", unit="variants") if self.show_progress else self.bgen_file
+                for i, variant in enumerate(iterator):
                     variant_info_list.append(_extract_variant_info(variant, i))
 
                     dosage = _compute_dosage_from_variant(variant)
@@ -532,7 +544,8 @@ class BgenFileReader:
             variant_info_list = []
 
             # Process variants
-            for i, variant in enumerate(variants_in_region):
+            iterator = tqdm(variants_in_region, desc=f"Loading region {search_chrom}:{start_pos}-{end_pos}", unit="variants") if self.show_progress else variants_in_region
+            for i, variant in enumerate(iterator):
                 variant_info_list.append(_extract_variant_info(variant, i))
                 self._process_variant_dosage(variant, i, dosages, i, sample_indices)
 
@@ -550,14 +563,29 @@ class BgenFileReader:
             dosages = np.empty((n_samples_out, n_variants), dtype=dtype)
 
             # Process only the variants we need
-            for i, variant in enumerate(self.bgen_file):
-                if i in indices_to_output:
-                    output_idx = indices_to_output[i]
-                    self._process_variant_dosage(variant, i, dosages, output_idx, sample_indices)
+            processed = 0
+            if self.show_progress:
+                with tqdm(total=n_variants, desc="Loading filtered variants", unit="variants") as pbar:
+                    for i, variant in enumerate(self.bgen_file):
+                        if i in indices_to_output:
+                            output_idx = indices_to_output[i]
+                            self._process_variant_dosage(variant, i, dosages, output_idx, sample_indices)
+                            processed += 1
+                            pbar.update(1)
 
-                    # Stop if we've processed all needed variants
-                    if output_idx == n_variants - 1:
-                        break
+                            # Stop if we've processed all needed variants
+                            if processed == n_variants:
+                                break
+            else:
+                for i, variant in enumerate(self.bgen_file):
+                    if i in indices_to_output:
+                        output_idx = indices_to_output[i]
+                        self._process_variant_dosage(variant, i, dosages, output_idx, sample_indices)
+                        processed += 1
+
+                        # Stop if we've processed all needed variants
+                        if processed == n_variants:
+                            break
 
             variant_info = pd.DataFrame(filtered_variant_info)
             return dosages, variant_info, n_samples_out
@@ -578,6 +606,7 @@ def load_bgen(
     variant_filter: Optional[Dict[str, Any]] = None,
     sample_ids: Optional[List[str]] = None,
     dtype: np.dtype = np.float64,
+    show_progress: bool = True,
 ) -> Tuple[np.ndarray, pd.DataFrame, List[str]]:
     """
     Load genotype data from BGEN file.
@@ -598,6 +627,8 @@ def load_bgen(
         Sample IDs to keep. If None, all samples are loaded.
     dtype : numpy.dtype, optional
         Data type for the dosage array (default: np.float64)
+    show_progress : bool, optional
+        Whether to show progress bars during loading (default: True)
 
     Returns:
     --------
@@ -609,7 +640,8 @@ def load_bgen(
     """
     # Open BGEN file
     bgen_reader = BgenFileReader(
-        file_path=file_path, index_path=index_path, sample_path=sample_path
+        file_path=file_path, index_path=index_path, sample_path=sample_path,
+        show_progress=show_progress
     )
 
     try:
