@@ -707,6 +707,19 @@ def load_bgen(
         # Validate genotypes
         assert np.issubdtype(dosages.dtype, np.floating), "Genotypes must be floating point"
 
+        # Check for out-of-range dosage values (potential memory leak in bgen library)
+        min_dosage = np.nanmin(dosages)
+        max_dosage = np.nanmax(dosages)
+
+        if min_dosage < 0.0 or max_dosage > 2.0:
+            raise ValueError(
+                f"Dosage values out of valid range [0, 2] detected "
+                f"(min: {min_dosage:.6f}, max: {max_dosage:.6f}). "
+                f"This may indicate a memory initialization issue in the bgen library. "
+                f"Please ensure you are using the fixed version from: "
+                f"https://github.com/mkanai/bgen"
+            )
+
         # Handle NaN values based on nan_action
         if np.any(np.isnan(dosages)):
             if nan_action == "error":
