@@ -26,6 +26,8 @@ cd ldcov
 pip install -e .
 ```
 
+**Note**: ldcov uses a custom fork of the bgen library with memory initialization fixes. This will be automatically installed when you install ldcov.
+
 ## Usage
 
 ### Command-Line Interface
@@ -202,11 +204,12 @@ See [docs/adjusted_genotypes.md](docs/adjusted_genotypes.md) for mathematical de
 
 ## Requirements
 
-- Python 3
-- numpy
-- pandas
-- bgen (for BGEN file support)
-- gcsfs
+- Python 3.8+
+- numpy >= 1.19.0
+- pandas >= 1.0.0
+- bgen (custom fork with memory fixes, automatically installed)
+- gcsfs >= 0.7.0
+- tqdm >= 4.50.0
 
 ## License
 

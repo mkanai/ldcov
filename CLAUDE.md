@@ -530,3 +530,30 @@ This reorganization makes it easier to:
 ### Development Dependencies
 - Core: numpy>=1.19.0, pandas>=1.0.0, bgen, gcsfs>=0.7.0, tqdm>=4.50.0
 - Dev: pytest>=6.0.0, pytest-cov>=2.10.0, black>=20.8b1, flake8>=3.8.0
+
+## BGEN Library Dependency (January 2025)
+
+### Custom BGEN Fork
+ldcov uses a custom fork of the bgen library with critical memory initialization fixes:
+- GitHub: https://github.com/mkanai/bgen
+- Specific commit: 99839781e932be6ed0b4cb3ff948b75eec2fc663
+- Fixes transient NaN errors caused by uninitialized memory in the original bgen library
+
+### Installation
+The custom bgen version is specified in `pyproject.toml` and will be automatically installed:
+```bash
+# Install ldcov with the fixed bgen library
+pip install -e .
+
+# Or install from GitHub
+pip install git+https://github.com/mkanai/ldcov.git
+```
+
+### Memory Initialization Fixes
+The custom bgen fork includes:
+1. Replaced `np.empty()` with `np.zeros()` in Python interface
+2. Zero-initialized C++ arrays with `new char[size]()`
+3. Proper string initialization with `resize(len, '\0')`
+4. Bounds checking for array operations
+
+These fixes prevent transient errors where uninitialized memory could contain extreme values causing numeric overflow and NaN propagation in LD calculations.
