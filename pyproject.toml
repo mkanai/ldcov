@@ -26,7 +26,7 @@ dynamic = ["version"]
 dependencies = [
     "numpy>=1.19.0",
     "pandas>=1.0.0",
-    "bgen @ git+https://github.com/mkanai/bgen@92926f40f0797b69fe333ca91ca70dc2a98cc72d",
+    "bgen @ git+https://github.com/mkanai/bgen@278f9b80773ec13fb92ccd7480923e45db92431e",
     "gcsfs>=0.7.0",
     "tqdm>=4.50.0",
 ]
