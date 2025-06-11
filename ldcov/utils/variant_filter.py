@@ -89,15 +89,15 @@ def get_filter_summary(variant_filter: Dict[str, Any]) -> str:
         Summary string describing the filter
     """
     n_variants = len(variant_filter["positions"])
-    
+
     if n_variants == 0:
         return "Empty variant filter"
-    
+
     chromosome = variant_filter["chromosome"]
     positions = variant_filter["positions"]
     min_pos = min(positions)
     max_pos = max(positions)
-    
+
     return (
         f"Variant filter: {n_variants} variants on chromosome {chromosome} "
         f"(positions {min_pos:,} - {max_pos:,})"
@@ -160,7 +160,7 @@ def _check_duplicates(z_df: pd.DataFrame, positions: np.ndarray) -> None:
     # Check for exact duplicate variants (same position AND same alleles)
     exact_duplicates = z_df.duplicated(subset=["position", "allele1", "allele2"], keep=False)
     n_exact_duplicates = exact_duplicates.sum()
-    
+
     if n_exact_duplicates > 0:
         logger.warning(
             f"Found {n_exact_duplicates} variants with duplicate position+allele combinations"
@@ -169,7 +169,7 @@ def _check_duplicates(z_df: pd.DataFrame, positions: np.ndarray) -> None:
     # Log info about duplicate positions with different alleles (allowed)
     position_duplicates = z_df.duplicated(subset=["position"], keep=False)
     n_position_duplicates = position_duplicates.sum()
-    
+
     if n_position_duplicates > 0:
         n_unique_positions = len(np.unique(positions))
         n_duplicate_positions = len(positions) - n_unique_positions

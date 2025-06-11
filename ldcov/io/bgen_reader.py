@@ -269,7 +269,7 @@ class BgenFileReader:
             Path to sample file
         show_progress : bool, optional
             Whether to show progress bars (default: True)
-            
+
         Raises:
         -------
         FileNotFoundError
@@ -284,27 +284,27 @@ class BgenFileReader:
         # Check if bgen module is available
         if not BGEN_AVAILABLE:
             raise ImportError("bgen module not available. Install with 'pip install bgen'")
-            
+
         # Check BGEN file exists
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"BGEN file not found: {file_path}")
-        
+
         # Determine BGI path
         if index_path is not None:
             self.bgi_path = index_path
         else:
-            self.bgi_path = file_path + '.bgi'
-            
+            self.bgi_path = file_path + ".bgi"
+
         # BGI is mandatory
         if not os.path.exists(self.bgi_path):
             raise FileNotFoundError(
                 f"BGI index required but not found: {self.bgi_path}\n"
                 f"Please create index using: bgenix -g {file_path}"
             )
-        
+
         # Open BGI for metadata access
         self.bgi = BGIReader(self.bgi_path)
-        
+
         # Open BGEN file and get metadata
         self._open_bgen()
 
@@ -320,11 +320,13 @@ class BgenFileReader:
             # Get metadata
             self.sample_ids = self.bgen_file.samples
             self.n_samples = len(self.sample_ids)
-            
+
             # Get variant count from BGI
             self.n_variants = self.bgi.get_variant_count()
 
-            logger.info(f"Opened BGEN file with {self.n_samples} samples and {self.n_variants} variants")
+            logger.info(
+                f"Opened BGEN file with {self.n_samples} samples and {self.n_variants} variants"
+            )
 
         except Exception as e:
             logger.error(f"Error opening BGEN file: {e}")
@@ -345,10 +347,10 @@ class BgenFileReader:
     ) -> Tuple[np.ndarray, pd.DataFrame]:
         """
         Load variant dosages using metadata from BGI.
-        
+
         This method uses the new offset-based reading to directly access variants
         without needing to iterate through the entire file.
-        
+
         Parameters:
         -----------
         variant_metadata : pd.DataFrame
@@ -357,7 +359,7 @@ class BgenFileReader:
             Sample indices to keep
         dtype : np.dtype
             Data type for dosages
-            
+
         Returns:
         --------
         Tuple[np.ndarray, pd.DataFrame]
@@ -367,21 +369,25 @@ class BgenFileReader:
         if n_variants == 0:
             n_samples_out = len(sample_indices) if sample_indices else self.n_samples
             return np.empty((n_samples_out, 0), dtype=dtype), pd.DataFrame()
-        
+
         # Determine output dimensions
         n_samples_out = len(sample_indices) if sample_indices else self.n_samples
-        
+
         # Pre-allocate dosage array
         dosages = np.empty((n_samples_out, n_variants), dtype=dtype)
-        
+
         # Extract file offsets from metadata
-        file_offsets = variant_metadata['file_offset'].values
-        
+        file_offsets = variant_metadata["file_offset"].values
+
         # Read all variants at once using their file offsets
         variants = self.bgen_file.read_variants_at_offsets(file_offsets.tolist())
-        
+
         # Process each variant with optional progress bar
-        pbar = tqdm(total=n_variants, desc="Loading variants", unit="variants") if self.show_progress else None
+        pbar = (
+            tqdm(total=n_variants, desc="Loading variants", unit="variants")
+            if self.show_progress
+            else None
+        )
         try:
             for i, variant in enumerate(variants):
                 self._process_variant_dosage(variant, i, dosages, i, sample_indices)
@@ -390,12 +396,12 @@ class BgenFileReader:
         finally:
             if pbar:
                 pbar.close()
-        
+
         # Prepare variant info DataFrame with consistent column names
-        variant_info = variant_metadata[['chrom', 'pos', 'rsid', 'ref', 'alt']].copy()
-        variant_info['id'] = variant_info['rsid']  # Duplicate rsid as id for compatibility
-        variant_info['idx'] = np.arange(n_variants)
-        
+        variant_info = variant_metadata[["chrom", "pos", "rsid", "ref", "alt"]].copy()
+        variant_info["id"] = variant_info["rsid"]  # Duplicate rsid as id for compatibility
+        variant_info["idx"] = np.arange(n_variants)
+
         return dosages, variant_info
 
     def get_sample_indices(self, sample_ids_to_keep: List[str]) -> Tuple[List[int], List[str]]:
@@ -426,13 +432,13 @@ class BgenFileReader:
         # Use searchsorted for efficient ordering
         sorter = np.argsort(ids_to_keep_array)
         sorted_keep = ids_to_keep_array[sorter]
-        
+
         # Find where each found ID would be inserted in the sorted array
         insert_positions = np.searchsorted(sorted_keep, found_ids)
-        
+
         # Get the original positions in sample_ids_to_keep
         original_positions = sorter[insert_positions]
-        
+
         # Sort by original order
         order = np.argsort(original_positions)
         filtered_ids = found_ids[order].tolist()
@@ -446,7 +452,6 @@ class BgenFileReader:
             )
 
         return indices, filtered_ids
-
 
     def _process_variant_dosage(
         self,
@@ -484,8 +489,6 @@ class BgenFileReader:
             logger.warning(f"Error computing dosage for variant at column {col_idx}: {e}")
             dosages[:, col_idx] = np.nan
 
-
-
     def load_all_variants(
         self,
         sample_indices: Optional[List[int]] = None,
@@ -493,14 +496,14 @@ class BgenFileReader:
     ) -> Tuple[np.ndarray, pd.DataFrame]:
         """
         Load all variants using BGI metadata.
-        
+
         Parameters:
         -----------
         sample_indices : List[int], optional
             Sample indices to keep
         dtype : np.dtype
             Data type for dosages
-            
+
         Returns:
         --------
         Tuple[np.ndarray, pd.DataFrame]
@@ -509,18 +512,18 @@ class BgenFileReader:
         logger.info("Loading all variants from BGEN file")
         variant_metadata = self.bgi.get_all_variants()
         return self._load_variants(variant_metadata, sample_indices, dtype)
-    
+
     def load_region_variants(
         self,
         chrom: str,
-        start_pos: int, 
+        start_pos: int,
         end_pos: int,
         sample_indices: Optional[List[int]] = None,
         dtype: np.dtype = np.float64,
     ) -> Tuple[np.ndarray, pd.DataFrame]:
         """
         Load variants in a genomic region using BGI.
-        
+
         Parameters:
         -----------
         chrom : str
@@ -533,7 +536,7 @@ class BgenFileReader:
             Sample indices to keep
         dtype : np.dtype
             Data type for dosages
-            
+
         Returns:
         --------
         Tuple[np.ndarray, pd.DataFrame]
@@ -541,13 +544,13 @@ class BgenFileReader:
         """
         search_chrom = _normalize_chromosome(chrom)
         logger.info(f"Loading variants from region {search_chrom}:{start_pos}-{end_pos}")
-        
+
         variant_metadata = self.bgi.get_variants_in_region(search_chrom, start_pos, end_pos)
         if len(variant_metadata) == 0:
             logger.warning(f"No variants found in region {chrom}:{start_pos}-{end_pos}")
-        
+
         return self._load_variants(variant_metadata, sample_indices, dtype)
-    
+
     def load_filtered_variants(
         self,
         variant_filter: Dict[str, Any],
@@ -556,7 +559,7 @@ class BgenFileReader:
     ) -> Tuple[np.ndarray, pd.DataFrame]:
         """
         Load variants matching a filter using BGI.
-        
+
         Parameters:
         -----------
         variant_filter : Dict[str, Any]
@@ -566,38 +569,33 @@ class BgenFileReader:
             Sample indices to keep
         dtype : np.dtype
             Data type for dosages
-            
+
         Returns:
         --------
         Tuple[np.ndarray, pd.DataFrame]
             (dosages, variant_info)
         """
         logger.info("Loading filtered variants matching .z file")
-        
+
         # Convert positions to numpy array if not already
-        positions = np.array(variant_filter['positions'], dtype=np.int32)
-        
+        positions = np.array(variant_filter["positions"], dtype=np.int32)
+
         # Find matching variants
         # Extract chromosome from filter - this must be present
         # Z-file and BGEN should have matching chromosome format
-        if 'chromosome' not in variant_filter:
+        if "chromosome" not in variant_filter:
             raise ValueError("Variant filter must contain 'chromosome' field")
-        chromosome = variant_filter['chromosome']
-        
+        chromosome = variant_filter["chromosome"]
+
         matched_variants = self.bgi.find_variants_by_filter(
-            chromosome,
-            positions,
-            variant_filter['allele1'],
-            variant_filter['allele2']
+            chromosome, positions, variant_filter["allele1"], variant_filter["allele2"]
         )
-        
+
         if len(matched_variants) == 0:
             raise ValueError("No variants from filter found in BGEN file")
-        
-        logger.info(
-            f"Found {len(matched_variants)} out of {len(positions)} variants from filter"
-        )
-        
+
+        logger.info(f"Found {len(matched_variants)} out of {len(positions)} variants from filter")
+
         return self._load_variants(matched_variants, sample_indices, dtype)
 
     def __del__(self):
@@ -694,9 +692,7 @@ def load_bgen(
             )
         else:
             # Load all variants
-            dosages, variant_info = bgen_reader.load_all_variants(
-                sample_indices, dtype
-            )
+            dosages, variant_info = bgen_reader.load_all_variants(sample_indices, dtype)
 
         # Check if we loaded any variants
         if dosages.size == 0 or dosages.shape[1] == 0:
