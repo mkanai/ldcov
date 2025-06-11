@@ -374,7 +374,8 @@ class BgenFileReader:
         """
         Load variant dosages using metadata from BGI.
         
-        This is the unified loading method that handles all scenarios.
+        This method uses the new offset-based reading to directly access variants
+        without needing to iterate through the entire file.
         
         Parameters:
         -----------
@@ -401,95 +402,26 @@ class BgenFileReader:
         # Pre-allocate dosage array
         dosages = np.empty((n_samples_out, n_variants), dtype=dtype)
         
-        # For efficient loading, we'll use the bgen library's index-based access
-        # First, create a mapping of positions to our output columns
-        position_to_col = {}
-        chrom_pos_to_col = {}
-        for i, meta in enumerate(variant_metadata):
-            chrom_pos_to_col[(meta['chrom'], meta['pos'])] = i
-            position_to_col[meta['pos']] = i
+        # Extract file offsets from metadata
+        file_offsets = variant_metadata['file_offset']
         
-        # Load variants
-        loaded = 0
-        
+        # Use the new offset-based reading to load variants directly
         if self.show_progress:
-            # For specific regions/filters, use fetch if possible
-            if n_variants < self.n_variants / 2:  # Heuristic: use fetch for small subsets
-                # Get unique chromosome from metadata
-                chroms = np.unique(variant_metadata['chrom'])
+            with tqdm(total=n_variants, desc="Loading variants", unit="variants") as pbar:
+                # Read all variants at once using their file offsets
+                variants = self.bgen_file.read_variants_at_offsets(file_offsets.tolist())
                 
-                with tqdm(total=n_variants, desc="Loading variants", unit="variants") as pbar:
-                    for chrom in chroms:
-                        chrom_mask = variant_metadata['chrom'] == chrom
-                        if not np.any(chrom_mask):
-                            continue
-                            
-                        chrom_variants = variant_metadata[chrom_mask]
-                        min_pos = np.min(chrom_variants['pos'])
-                        max_pos = np.max(chrom_variants['pos'])
-                        
-                        # Fetch variants in this region
-                        for variant in self.bgen_file.fetch(chrom, min_pos, max_pos):
-                            key = (variant.chrom, variant.pos)
-                            if key in chrom_pos_to_col:
-                                col_idx = chrom_pos_to_col[key]
-                                self._process_variant_dosage(variant, col_idx, dosages, col_idx, sample_indices)
-                                loaded += 1
-                                pbar.update(1)
-                                
-                                if loaded >= n_variants:
-                                    break
-                        
-                        if loaded >= n_variants:
-                            break
-            else:
-                # For all variants or large subsets, iterate through all
-                with tqdm(total=n_variants, desc="Loading variants", unit="variants") as pbar:
-                    for variant in self.bgen_file:
-                        key = (variant.chrom, variant.pos)
-                        if key in chrom_pos_to_col:
-                            col_idx = chrom_pos_to_col[key]
-                            self._process_variant_dosage(variant, col_idx, dosages, col_idx, sample_indices)
-                            loaded += 1
-                            pbar.update(1)
-                            
-                            if loaded >= n_variants:
-                                break
+                # Process each variant
+                for i, variant in enumerate(variants):
+                    self._process_variant_dosage(variant, i, dosages, i, sample_indices)
+                    pbar.update(1)
         else:
-            # Same logic without progress bar
-            if n_variants < self.n_variants / 2:
-                chroms = np.unique(variant_metadata['chrom'])
-                for chrom in chroms:
-                    chrom_mask = variant_metadata['chrom'] == chrom
-                    if not np.any(chrom_mask):
-                        continue
-                        
-                    chrom_variants = variant_metadata[chrom_mask]
-                    min_pos = np.min(chrom_variants['pos'])
-                    max_pos = np.max(chrom_variants['pos'])
-                    
-                    for variant in self.bgen_file.fetch(chrom, min_pos, max_pos):
-                        key = (variant.chrom, variant.pos)
-                        if key in chrom_pos_to_col:
-                            col_idx = chrom_pos_to_col[key]
-                            self._process_variant_dosage(variant, col_idx, dosages, col_idx, sample_indices)
-                            loaded += 1
-                            
-                            if loaded >= n_variants:
-                                break
-                    
-                    if loaded >= n_variants:
-                        break
-            else:
-                for variant in self.bgen_file:
-                    key = (variant.chrom, variant.pos)
-                    if key in chrom_pos_to_col:
-                        col_idx = chrom_pos_to_col[key]
-                        self._process_variant_dosage(variant, col_idx, dosages, col_idx, sample_indices)
-                        loaded += 1
-                        
-                        if loaded >= n_variants:
-                            break
+            # Read all variants at once using their file offsets
+            variants = self.bgen_file.read_variants_at_offsets(file_offsets.tolist())
+            
+            # Process each variant
+            for i, variant in enumerate(variants):
+                self._process_variant_dosage(variant, i, dosages, i, sample_indices)
         
         # Convert metadata to DataFrame
         variant_info = pd.DataFrame({
