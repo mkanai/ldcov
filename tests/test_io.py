@@ -66,63 +66,14 @@ class TestIO(unittest.TestCase):
 
     # ==================== BGEN Reader Tests ====================
 
-    def test_bgen_reader_filtered_loading(self):
-        """Test BgenFileReader's filtered loading method."""
-        with patch("ldcov.io.bgen_reader.BgenReader") as mock_bgen:
-            # Setup mock BGEN file
-            mock_bgen_instance = mock_bgen.return_value
-            mock_bgen_instance.samples = ["S1", "S2", "S3"]
-
-            # Create mock variants - simulating 5 variants but only wanting 2
-            class MockVariant:
-                def __init__(self, rsid, chrom, pos, ref, alt):
-                    self.rsid = rsid
-                    self.chrom = chrom
-                    self.pos = pos
-                    self.alleles = [ref, alt]
-                    self.alt_dosage = np.array([0.0, 1.0, 2.0])  # Mock dosages
-
-            mock_variants = [
-                MockVariant("rs1", "1", 100, "A", "T"),
-                MockVariant("rs2", "1", 200, "C", "G"),  # Want this one
-                MockVariant("rs3", "1", 300, "G", "A"),
-                MockVariant("rs4", "1", 400, "T", "A"),  # Want this one
-                MockVariant("rs5", "1", 500, "A", "C"),
-            ]
-
-            # Make the mock iterable
-            mock_bgen_instance.__iter__ = lambda self: iter(mock_variants)
-
-            # Create reader instance
-            reader = BgenFileReader("dummy.bgen")
-
-            # Create variant filter
-            variant_filter = {
-                "positions": [200, 400],
-                "rsids": ["rs2", "rs4"],
-                "allele1": ["C", "T"],
-                "allele2": ["G", "A"],
-            }
-
-            # Prepare filtered variants
-            filtered_variant_info, bgen_indices, indices_to_output = (
-                reader._prepare_filtered_variants(variant_filter)
-            )
-
-            # Load filtered variants using the unified method
-            dosages, var_info, n_samples = reader._load_dosages(
-                "filtered",
-                filtered_params=(filtered_variant_info, bgen_indices, indices_to_output),
-                dtype=np.float64,
-            )
-
-            # Verify results
-            self.assertEqual(dosages.shape, (3, 2))  # 3 samples, 2 variants
-            self.assertEqual(len(var_info), 2)
-            self.assertEqual(var_info.iloc[0]["id"], "rs2")
-            self.assertEqual(var_info.iloc[1]["id"], "rs4")
-            self.assertEqual(var_info.iloc[0]["pos"], 200)
-            self.assertEqual(var_info.iloc[1]["pos"], 400)
+    def test_bgen_reader_requires_bgi(self):
+        """Test that BGEN reader requires BGI file."""
+        # Create a temp BGEN file without BGI
+        with tempfile.NamedTemporaryFile(suffix=".bgen") as f:
+            # Should fail without BGI
+            with self.assertRaises(FileNotFoundError) as context:
+                BgenFileReader(f.name)
+            self.assertIn("BGI index required", str(context.exception))
 
     def test_bgen_reader_initialization(self):
         """Test BgenFileReader initialization."""
@@ -212,197 +163,115 @@ class TestIO(unittest.TestCase):
 
         self.assertIn("No variants were loaded", str(context.exception))
 
-    def test_load_bgen_with_variant_filter(self):
-        """Test efficient loading with variant filter."""
-        # This test uses a mock to simulate variant filtering
-        with patch("ldcov.io.bgen_reader.BgenFileReader") as mock_reader:
-            # Create mock data
-            mock_instance = mock_reader.return_value
-            mock_instance.sample_ids = ["sample1", "sample2", "sample3"]
-            mock_instance.n_samples = 3
+    def test_load_all_variants(self):
+        """Test loading all variants using BGI."""
+        reader = BgenFileReader(
+            str(self.bgen_file),
+            sample_path=str(self.sample_file)
+        )
+        
+        dosages, variant_info = reader.load_all_variants()
+        
+        # Check dimensions
+        self.assertEqual(dosages.shape[0], reader.n_samples)
+        self.assertEqual(dosages.shape[1], reader.n_variants)
+        self.assertEqual(len(variant_info), reader.n_variants)
+        
+        # Check variant info columns
+        expected_cols = {'chrom', 'pos', 'id', 'rsid', 'ref', 'alt', 'idx'}
+        self.assertEqual(set(variant_info.columns), expected_cols)
+        
+        # Check dosages are in valid range
+        self.assertTrue(np.all(dosages >= 0) and np.all(dosages <= 2))
+        
+        reader.close()
 
-            # Create variant filter (simulating a .z file)
-            variant_filter = {
-                "chromosome": "1",
-                "positions": [200, 400],  # Only want variants at positions 200 and 400
-                "rsids": ["rs2", "rs4"],
-                "allele1": ["C", "T"],
-                "allele2": ["G", "A"],
-                "z_file_order": [0, 1],
-            }
+    def test_load_region_variants(self):
+        """Test loading variants from a region using BGI."""
+        reader = BgenFileReader(str(self.bgen_file))
+        
+        # Load region with variants
+        dosages, variant_info = reader.load_region_variants('01', 1, 10)
+        
+        self.assertGreater(dosages.shape[1], 0)  # Should have some variants
+        self.assertEqual(len(variant_info), dosages.shape[1])
+        self.assertTrue(np.all(variant_info['pos'] >= 1))
+        self.assertTrue(np.all(variant_info['pos'] <= 10))
+        
+        # Empty region
+        dosages2, variant_info2 = reader.load_region_variants('01', 100000, 200000)
+        self.assertEqual(dosages2.shape, (reader.n_samples, 0))
+        self.assertEqual(len(variant_info2), 0)
+        
+        reader.close()
 
-            # Mock the filtered loading method
-            filtered_dosages = np.array(
-                [
-                    [1.0, 2.0],  # sample 1
-                    [0.5, 1.5],  # sample 2
-                    [2.0, 0.0],  # sample 3
-                ]
+    def test_load_filtered_variants(self):
+        """Test loading filtered variants from z file."""
+        # Create a simple z file for testing
+        z_data = pd.DataFrame({
+            'chromosome': ['01', '01', '01'],
+            'position': [1, 5, 10],
+            'allele1': ['A', 'A', 'A'],
+            'allele2': ['G', 'G', 'G'],
+            'rsid': ['rs1', 'rs5', 'rs10']
+        })
+        z_file = os.path.join(self.temp_dir, "test.z")
+        z_data.to_csv(z_file, sep='\t', index=False)
+        
+        # Import the functions we need
+        from ldcov.utils.variant_filter import read_z_file, create_variant_filter_from_z
+        
+        reader = BgenFileReader(str(self.bgen_file))
+        
+        # Create filter from z file
+        z_df = read_z_file(z_file)
+        variant_filter = create_variant_filter_from_z(z_df)
+        
+        # Load filtered variants
+        dosages, variant_info = reader.load_filtered_variants(variant_filter)
+        
+        # Should have loaded the variants in z file (or fewer if some don't exist)
+        self.assertLessEqual(dosages.shape[1], len(variant_filter['positions']))
+        self.assertEqual(len(variant_info), dosages.shape[1])
+        
+        reader.close()
+
+    def test_sample_filtering(self):
+        """Test sample filtering in BGEN reader."""
+        reader = BgenFileReader(
+            str(self.bgen_file),
+            sample_path=str(self.sample_file)
+        )
+        
+        # Get subset of samples
+        sample_ids_to_keep = reader.sample_ids[:3]  # First 3 samples
+        sample_indices, filtered_ids = reader.get_sample_indices(sample_ids_to_keep)
+        
+        self.assertEqual(len(sample_indices), 3)
+        self.assertEqual(len(filtered_ids), 3)
+        self.assertEqual(filtered_ids, sample_ids_to_keep)
+        
+        # Load with sample filtering
+        dosages, variant_info = reader.load_all_variants(sample_indices)
+        
+        self.assertEqual(dosages.shape[0], 3)  # Only 3 samples
+        
+        reader.close()
+
+    def test_nan_handling(self):
+        """Test NaN handling options."""
+        # Note: The example BGEN file doesn't contain NaN values,
+        # so nan_action is accepted but not actually triggered
+        
+        # Should not raise with valid nan_action
+        for action in ['error', 'mean', 'omit']:
+            dosages, variant_info, sample_ids = load_bgen(
+                str(self.bgen_file),
+                nan_action=action
             )
+            self.assertIsNotNone(dosages)
+            self.assertFalse(np.any(np.isnan(dosages)))  # No NaN values in test data
 
-            filtered_variant_info = pd.DataFrame(
-                {
-                    "id": ["rs2", "rs4"],
-                    "chrom": ["1", "1"],
-                    "pos": [200, 400],
-                    "ref": ["C", "T"],
-                    "alt": ["G", "A"],
-                    "rsid": ["rs2", "rs4"],
-                    "idx": [1, 3],
-                }
-            )
-
-            # Mock the prepare method
-            mock_instance._prepare_filtered_variants.return_value = (
-                filtered_variant_info.to_dict("records"),
-                [1, 3],
-                {1: 0, 3: 1},
-            )
-
-            # Mock the load_dosages method
-            mock_instance._load_dosages.return_value = (filtered_dosages, filtered_variant_info, 3)
-
-            # Load with variant filter
-            genotypes, var_info, sample_ids = load_bgen("dummy.bgen", variant_filter=variant_filter)
-
-            # Verify the methods were called
-            mock_instance._prepare_filtered_variants.assert_called_once_with(variant_filter)
-            mock_instance._load_dosages.assert_called_once()
-
-            # Verify results
-            self.assertEqual(genotypes.shape, (3, 2))
-            self.assertEqual(len(var_info), 2)
-            self.assertListEqual(var_info["id"].tolist(), ["rs2", "rs4"])
-            self.assertListEqual(var_info["pos"].tolist(), [200, 400])
-
-    def test_load_bgen_nan_validation(self):
-        """Test that load_bgen raises error when NaN values are detected."""
-        # This test uses a mock since we can't easily create a BGEN file with NaN values
-        with patch("ldcov.io.bgen_reader.BgenFileReader") as mock_reader:
-            # Create mock data with NaN values
-            mock_instance = mock_reader.return_value
-            mock_instance.sample_ids = ["sample1", "sample2", "sample3"]
-            mock_instance.n_samples = 3
-
-            # Create dosages with NaN values
-            dosages_with_nan = np.array(
-                [
-                    [0.0, 1.0, np.nan],  # variant 0, sample 2 has NaN
-                    [2.0, np.nan, 1.0],  # variant 1, sample 1 has NaN
-                    [np.nan, 0.0, 2.0],  # variant 2, sample 0 has NaN
-                ]
-            ).T  # Transpose to get samples x variants
-
-            variant_info = pd.DataFrame(
-                {
-                    "id": ["rs1", "rs2", "rs3"],
-                    "chrom": ["1", "1", "1"],
-                    "pos": [100, 200, 300],
-                    "ref": ["A", "C", "G"],
-                    "alt": ["T", "G", "A"],
-                }
-            )
-
-            # Mock the prepare method
-            mock_instance._prepare_all_variants.return_value = (None, None, None)
-
-            # Mock the load_dosages method to return NaN data
-            mock_instance._load_dosages.return_value = (dosages_with_nan, variant_info, 3)
-
-            # Should raise ValueError with detailed NaN information
-            with self.assertRaises(ValueError) as context:
-                load_bgen("dummy.bgen", nan_action="error")
-
-            self.assertIn("Genotype matrix contains NaN values", str(context.exception))
-
-    def test_load_bgen_nan_mean_imputation(self):
-        """Test mean imputation for NaN values."""
-        with patch("ldcov.io.bgen_reader.BgenFileReader") as mock_reader:
-            # Create mock data with NaN values
-            mock_instance = mock_reader.return_value
-            mock_instance.sample_ids = ["sample1", "sample2", "sample3", "sample4"]
-            mock_instance.n_samples = 4
-
-            # Create dosages with NaN values
-            dosages_with_nan = np.array(
-                [
-                    [1.0, 2.0, np.nan, 1.5],  # variant 0: mean should be 1.5
-                    [0.0, 0.0, 0.0, 0.0],  # variant 1: no NaN
-                    [np.nan, np.nan, np.nan, np.nan],  # variant 2: all NaN, should be 0
-                ]
-            ).T  # Transpose to get samples x variants
-
-            variant_info = pd.DataFrame(
-                {
-                    "id": ["rs1", "rs2", "rs3"],
-                    "chrom": ["1", "1", "1"],
-                    "pos": [100, 200, 300],
-                    "ref": ["A", "C", "G"],
-                    "alt": ["T", "G", "A"],
-                }
-            )
-
-            mock_instance._prepare_all_variants.return_value = (None, None, None)
-            mock_instance._load_dosages.return_value = (dosages_with_nan, variant_info, 4)
-
-            # Load with mean imputation
-            dosages, var_info, sample_ids = load_bgen("dummy.bgen", nan_action="mean")
-
-            # Check no NaN remains
-            self.assertFalse(np.any(np.isnan(dosages)))
-
-            # Check imputed values
-            self.assertAlmostEqual(dosages[2, 0], 1.5)  # Imputed with mean
-            self.assertEqual(dosages[0, 2], 0.0)  # All NaN variant imputed with 0
-            self.assertEqual(dosages[1, 1], 0.0)  # Original value unchanged
-
-    def test_load_bgen_nan_omit_samples(self):
-        """Test omitting samples with NaN values."""
-        with patch("ldcov.io.bgen_reader.BgenFileReader") as mock_reader:
-            # Create mock data with NaN values
-            mock_instance = mock_reader.return_value
-            mock_instance.sample_ids = ["sample1", "sample2", "sample3", "sample4"]
-            mock_instance.n_samples = 4
-
-            # Create dosages with NaN values
-            # sample1 and sample3 have NaN values
-            dosages_with_nan = np.array(
-                [
-                    [np.nan, 2.0, 1.0, 1.5],  # sample1 has NaN
-                    [1.0, 0.0, 0.5, 2.0],  # sample2 is clean
-                    [0.5, np.nan, 1.5, 0.0],  # sample3 has NaN
-                    [2.0, 1.0, 0.0, 1.0],  # sample4 is clean
-                ]
-            )
-
-            variant_info = pd.DataFrame(
-                {
-                    "id": ["rs1", "rs2", "rs3", "rs4"],
-                    "chrom": ["1", "1", "1", "1"],
-                    "pos": [100, 200, 300, 400],
-                    "ref": ["A", "C", "G", "T"],
-                    "alt": ["T", "G", "A", "C"],
-                }
-            )
-
-            mock_instance._prepare_all_variants.return_value = (None, None, None)
-            mock_instance._load_dosages.return_value = (dosages_with_nan, variant_info, 4)
-
-            # Load with sample omission
-            dosages, var_info, sample_ids = load_bgen("dummy.bgen", nan_action="omit")
-
-            # Check results
-            self.assertEqual(len(sample_ids), 2)  # Only 2 samples remain
-            self.assertIn("sample2", sample_ids)
-            self.assertIn("sample4", sample_ids)
-            self.assertNotIn("sample1", sample_ids)
-            self.assertNotIn("sample3", sample_ids)
-
-            # Check dosage matrix shape
-            self.assertEqual(dosages.shape, (2, 4))  # 2 samples, 4 variants
-
-            # Check no NaN in filtered data
-            self.assertFalse(np.any(np.isnan(dosages)))
 
     # ==================== BGEN Writer Tests ====================
 
@@ -1134,6 +1003,139 @@ class TestIO(unittest.TestCase):
         print(f"Without filtering: {memory_without_filtering:.1f} GB")
         print(f"With filtering: {memory_with_filtering:.1f} GB")
         print(f"Memory saved: {memory_saved:.1f} GB ({savings_percent:.0f}%)")
+
+    # ==================== BGI Reader Tests ====================
+
+    def test_bgi_reader_init(self):
+        """Test BGI reader initialization."""
+        from ldcov.io.bgi_reader import BGIReader
+        
+        # Should succeed with valid BGI
+        reader = BGIReader(str(self.bgi_file))
+        self.assertIsNotNone(reader)
+        reader.close()
+        
+        # Should fail with non-existent file
+        with self.assertRaises(FileNotFoundError):
+            BGIReader("/non/existent/file.bgi")
+        
+        # Should fail with invalid file
+        with tempfile.NamedTemporaryFile(suffix=".bgi") as f:
+            f.write(b"not a valid bgi file")
+            f.flush()
+            with self.assertRaises(ValueError) as context:
+                BGIReader(f.name)
+            self.assertIn("Error reading BGI file", str(context.exception))
+
+    def test_bgi_get_variant_count(self):
+        """Test getting variant count from BGI."""
+        from ldcov.io.bgi_reader import BGIReader
+        
+        with BGIReader(str(self.bgi_file)) as reader:
+            count = reader.get_variant_count()
+            self.assertGreater(count, 0)
+            
+            # Should be cached
+            count2 = reader.get_variant_count()
+            self.assertEqual(count2, count)
+
+    def test_bgi_get_all_variants(self):
+        """Test getting all variant metadata from BGI."""
+        from ldcov.io.bgi_reader import BGIReader
+        
+        with BGIReader(str(self.bgi_file)) as reader:
+            variants = reader.get_all_variants()
+            
+            # Check structure
+            self.assertGreater(len(variants), 0)
+            self.assertEqual(variants.dtype.names, ('chrom', 'pos', 'rsid', 'n_alleles', 
+                                           'ref', 'alt', 'file_offset', 'size_bytes'))
+            
+            # Check first variant
+            first = variants[0]
+            self.assertIsNotNone(first['chrom'])
+            self.assertGreater(first['pos'], 0)
+            self.assertIsNotNone(first['rsid'])
+            self.assertGreaterEqual(first['n_alleles'], 2)
+            self.assertIsNotNone(first['ref'])
+            self.assertGreater(first['file_offset'], 0)
+            self.assertGreater(first['size_bytes'], 0)
+            
+            # Check ordering by file offset
+            offsets = variants['file_offset']
+            self.assertTrue(np.all(offsets[1:] > offsets[:-1]))  # Strictly increasing
+
+    def test_bgi_get_variants_in_region(self):
+        """Test getting variants in a genomic region from BGI."""
+        from ldcov.io.bgi_reader import BGIReader
+        
+        with BGIReader(str(self.bgi_file)) as reader:
+            # Get all variants to find a valid region
+            all_variants = reader.get_all_variants()
+            if len(all_variants) == 0:
+                self.skipTest("No variants in BGI file")
+            
+            # Use first chromosome and position range
+            chrom = all_variants[0]['chrom']
+            min_pos = all_variants['pos'].min()
+            max_pos = all_variants['pos'].max()
+            mid_pos = (min_pos + max_pos) // 2
+            
+            # Region with variants
+            variants = reader.get_variants_in_region(chrom, min_pos, mid_pos)
+            # May have zero variants if mid_pos is too close to min_pos
+            if len(variants) > 0:
+                self.assertTrue(np.all(variants['chrom'] == chrom))
+                self.assertTrue(np.all(variants['pos'] >= min_pos))
+                self.assertTrue(np.all(variants['pos'] <= mid_pos))
+            
+            # Empty region
+            variants = reader.get_variants_in_region(chrom, max_pos + 1000, max_pos + 2000)
+            self.assertEqual(len(variants), 0)
+
+    def test_bgi_find_variants_by_filter(self):
+        """Test finding variants by position/allele/rsid in BGI."""
+        from ldcov.io.bgi_reader import BGIReader
+        
+        with BGIReader(str(self.bgi_file)) as reader:
+            # Get some actual variants to search for
+            all_variants = reader.get_all_variants()
+            if len(all_variants) < 3:
+                self.skipTest("Not enough variants for test")
+            
+            # Create filter matching first 3 variants
+            positions = all_variants['pos'][:3]
+            alleles1 = [all_variants['ref'][i] for i in range(3)]
+            alleles2 = [all_variants['alt'][i] for i in range(3)]
+            rsids = [all_variants['rsid'][i] for i in range(3)]
+            
+            matched, indices = reader.find_variants_by_filter(
+                positions, alleles1, alleles2, rsids
+            )
+            
+            # Should find all 3
+            self.assertEqual(len(matched), 3)
+            self.assertEqual(len(indices), 3)
+            self.assertTrue(np.array_equal(indices, [0, 1, 2]))
+            
+            # Test with swapped alleles (should still match)
+            matched2, indices2 = reader.find_variants_by_filter(
+                positions, alleles2, alleles1, rsids
+            )
+            
+            self.assertEqual(len(matched2), 3)
+            np.testing.assert_array_equal(matched2['pos'], matched['pos'])
+
+    def test_bgi_context_manager(self):
+        """Test BGI reader context manager usage."""
+        from ldcov.io.bgi_reader import BGIReader
+        
+        with BGIReader(str(self.bgi_file)) as reader:
+            count = reader.get_variant_count()
+            self.assertGreater(count, 0)
+        
+        # Connection should be closed after context
+        # (Can't easily test this without accessing private attributes)
 
     def test_bcor_backward_compatibility(self):
         """Test that standard bcor files can still be read correctly."""

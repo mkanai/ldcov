@@ -195,10 +195,12 @@ class TestCLI(unittest.TestCase):
             "--compute-ld",
         ]
 
-        # Should still work without BGI
-        main()
-
-        self.assertTrue(os.path.exists(f"{output_prefix}.ld"))
+        # Should raise an error without BGI
+        with self.assertRaises(SystemExit) as context:
+            main()
+        
+        # Verify it exited with error code
+        self.assertEqual(context.exception.code, 1)
 
     # ==================== Custom Covariate ID Column Tests ====================
 
