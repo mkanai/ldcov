@@ -1046,13 +1046,13 @@ class TestIO(unittest.TestCase):
         with BGIReader(str(self.bgi_file)) as reader:
             variants = reader.get_all_variants()
             
-            # Check structure
+            # Check structure (now a DataFrame)
             self.assertGreater(len(variants), 0)
-            self.assertEqual(variants.dtype.names, ('chrom', 'pos', 'rsid', 'n_alleles', 
-                                           'ref', 'alt', 'file_offset', 'size_bytes'))
+            expected_cols = {'chrom', 'pos', 'rsid', 'n_alleles', 'ref', 'alt', 'file_offset', 'size_bytes'}
+            self.assertEqual(set(variants.columns), expected_cols)
             
             # Check first variant
-            first = variants[0]
+            first = variants.iloc[0]
             self.assertIsNotNone(first['chrom'])
             self.assertGreater(first['pos'], 0)
             self.assertIsNotNone(first['rsid'])
@@ -1062,7 +1062,7 @@ class TestIO(unittest.TestCase):
             self.assertGreater(first['size_bytes'], 0)
             
             # Check ordering by file offset
-            offsets = variants['file_offset']
+            offsets = variants['file_offset'].values
             self.assertTrue(np.all(offsets[1:] > offsets[:-1]))  # Strictly increasing
 
     def test_bgi_get_variants_in_region(self):
@@ -1076,7 +1076,7 @@ class TestIO(unittest.TestCase):
                 self.skipTest("No variants in BGI file")
             
             # Use first chromosome and position range
-            chrom = all_variants[0]['chrom']
+            chrom = all_variants.iloc[0]['chrom']
             min_pos = all_variants['pos'].min()
             max_pos = all_variants['pos'].max()
             mid_pos = (min_pos + max_pos) // 2
@@ -1085,9 +1085,9 @@ class TestIO(unittest.TestCase):
             variants = reader.get_variants_in_region(chrom, min_pos, mid_pos)
             # May have zero variants if mid_pos is too close to min_pos
             if len(variants) > 0:
-                self.assertTrue(np.all(variants['chrom'] == chrom))
-                self.assertTrue(np.all(variants['pos'] >= min_pos))
-                self.assertTrue(np.all(variants['pos'] <= mid_pos))
+                self.assertTrue((variants['chrom'] == chrom).all())
+                self.assertTrue((variants['pos'] >= min_pos).all())
+                self.assertTrue((variants['pos'] <= mid_pos).all())
             
             # Empty region
             variants = reader.get_variants_in_region(chrom, max_pos + 1000, max_pos + 2000)
@@ -1104,27 +1104,27 @@ class TestIO(unittest.TestCase):
                 self.skipTest("Not enough variants for test")
             
             # Create filter matching first 3 variants
-            positions = all_variants['pos'][:3]
-            alleles1 = [all_variants['ref'][i] for i in range(3)]
-            alleles2 = [all_variants['alt'][i] for i in range(3)]
-            rsids = [all_variants['rsid'][i] for i in range(3)]
+            chromosome = all_variants['chrom'].iloc[0]  # Get chromosome from first variant
+            positions = all_variants['pos'].values[:3]
+            alleles1 = all_variants['ref'].values[:3].tolist()
+            alleles2 = all_variants['alt'].values[:3].tolist()
             
-            matched, indices = reader.find_variants_by_filter(
-                positions, alleles1, alleles2, rsids
+            matched = reader.find_variants_by_filter(
+                chromosome, positions, alleles1, alleles2
             )
             
             # Should find all 3
             self.assertEqual(len(matched), 3)
-            self.assertEqual(len(indices), 3)
-            self.assertTrue(np.array_equal(indices, [0, 1, 2]))
+            # Verify they're in the same order as requested
+            np.testing.assert_array_equal(matched['pos'].values, positions)
             
-            # Test with swapped alleles (should still match)
-            matched2, indices2 = reader.find_variants_by_filter(
-                positions, alleles2, alleles1, rsids
+            # Test with swapped alleles (should NOT match since exact match is required)
+            matched2 = reader.find_variants_by_filter(
+                chromosome, positions, alleles2, alleles1
             )
             
-            self.assertEqual(len(matched2), 3)
-            np.testing.assert_array_equal(matched2['pos'], matched['pos'])
+            # Should find 0 matches with swapped alleles
+            self.assertEqual(len(matched2), 0)
 
     def test_bgi_context_manager(self):
         """Test BGI reader context manager usage."""

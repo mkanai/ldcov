@@ -24,34 +24,6 @@ except ImportError:
     BGEN_AVAILABLE = False
 
 
-def _extract_variant_info(variant, idx: int) -> Dict[str, Any]:
-    """
-    Extract variant information from a BGEN variant object.
-
-    Parameters:
-    -----------
-    variant : bgen variant object
-        Variant object from the BGEN library
-    idx : int
-        Index of the variant
-
-    Returns:
-    --------
-    dict
-        Variant information dictionary
-    """
-    alleles = variant.alleles
-    return {
-        "chrom": variant.chrom,
-        "pos": variant.pos,
-        "id": variant.rsid,
-        "ref": alleles[0],
-        "alt": alleles[1] if len(alleles) > 1 else "",
-        "rsid": variant.rsid,
-        "idx": idx,
-    }
-
-
 def _compute_dosage_from_variant(variant) -> np.ndarray:
     """
     Compute dosage from a BGEN variant object.
@@ -367,7 +339,7 @@ class BgenFileReader:
 
     def _load_variants(
         self,
-        variant_metadata: np.ndarray,
+        variant_metadata: pd.DataFrame,
         sample_indices: Optional[List[int]] = None,
         dtype: np.dtype = np.float64,
     ) -> Tuple[np.ndarray, pd.DataFrame]:
@@ -379,8 +351,8 @@ class BgenFileReader:
         
         Parameters:
         -----------
-        variant_metadata : np.ndarray
-            Structured array from BGI with variant metadata
+        variant_metadata : pd.DataFrame
+            DataFrame from BGI with variant metadata
         sample_indices : List[int], optional
             Sample indices to keep
         dtype : np.dtype
@@ -403,36 +375,26 @@ class BgenFileReader:
         dosages = np.empty((n_samples_out, n_variants), dtype=dtype)
         
         # Extract file offsets from metadata
-        file_offsets = variant_metadata['file_offset']
+        file_offsets = variant_metadata['file_offset'].values
         
-        # Use the new offset-based reading to load variants directly
-        if self.show_progress:
-            with tqdm(total=n_variants, desc="Loading variants", unit="variants") as pbar:
-                # Read all variants at once using their file offsets
-                variants = self.bgen_file.read_variants_at_offsets(file_offsets.tolist())
-                
-                # Process each variant
-                for i, variant in enumerate(variants):
-                    self._process_variant_dosage(variant, i, dosages, i, sample_indices)
-                    pbar.update(1)
-        else:
-            # Read all variants at once using their file offsets
-            variants = self.bgen_file.read_variants_at_offsets(file_offsets.tolist())
-            
-            # Process each variant
+        # Read all variants at once using their file offsets
+        variants = self.bgen_file.read_variants_at_offsets(file_offsets.tolist())
+        
+        # Process each variant with optional progress bar
+        pbar = tqdm(total=n_variants, desc="Loading variants", unit="variants") if self.show_progress else None
+        try:
             for i, variant in enumerate(variants):
                 self._process_variant_dosage(variant, i, dosages, i, sample_indices)
+                if pbar:
+                    pbar.update(1)
+        finally:
+            if pbar:
+                pbar.close()
         
-        # Convert metadata to DataFrame
-        variant_info = pd.DataFrame({
-            'chrom': variant_metadata['chrom'],
-            'pos': variant_metadata['pos'],
-            'id': variant_metadata['rsid'],
-            'rsid': variant_metadata['rsid'],
-            'ref': variant_metadata['ref'],
-            'alt': variant_metadata['alt'],
-            'idx': np.arange(n_variants)
-        })
+        # Prepare variant info DataFrame with consistent column names
+        variant_info = variant_metadata[['chrom', 'pos', 'rsid', 'ref', 'alt']].copy()
+        variant_info['id'] = variant_info['rsid']  # Duplicate rsid as id for compatibility
+        variant_info['idx'] = np.arange(n_variants)
         
         return dosages, variant_info
 
@@ -455,26 +417,26 @@ class BgenFileReader:
         sample_ids_array = np.array(self.sample_ids)
         ids_to_keep_array = np.array(sample_ids_to_keep)
 
-        # Find matches using numpy
-        # Create a boolean mask for samples to keep
+        # Find which requested samples exist in BGEN
         mask = np.isin(sample_ids_array, ids_to_keep_array)
-        indices = np.where(mask)[0].tolist()
+        bgen_indices = np.where(mask)[0]
+        found_ids = sample_ids_array[mask]
 
-        # Get the filtered IDs in the order they appear in BGEN
-        filtered_ids = sample_ids_array[mask].tolist()
-
-        # To preserve the order of sample_ids_to_keep, we need to reorder
-        # Create a mapping from ID to its position in sample_ids_to_keep
-        order_map = {sid: i for i, sid in enumerate(sample_ids_to_keep)}
-
-        # Sort filtered_ids and indices by their order in sample_ids_to_keep
-        if filtered_ids:
-            sorted_pairs = sorted(
-                zip(filtered_ids, indices), key=lambda x: order_map.get(x[0], float("inf"))
-            )
-            filtered_ids, indices = zip(*sorted_pairs)
-            filtered_ids = list(filtered_ids)
-            indices = list(indices)
+        # Create a mapping to preserve the order of sample_ids_to_keep
+        # Use searchsorted for efficient ordering
+        sorter = np.argsort(ids_to_keep_array)
+        sorted_keep = ids_to_keep_array[sorter]
+        
+        # Find where each found ID would be inserted in the sorted array
+        insert_positions = np.searchsorted(sorted_keep, found_ids)
+        
+        # Get the original positions in sample_ids_to_keep
+        original_positions = sorter[insert_positions]
+        
+        # Sort by original order
+        order = np.argsort(original_positions)
+        filtered_ids = found_ids[order].tolist()
+        indices = bgen_indices[order].tolist()
 
         if len(indices) < len(sample_ids_to_keep):
             missing = set(sample_ids_to_keep) - set(filtered_ids)
@@ -598,7 +560,8 @@ class BgenFileReader:
         Parameters:
         -----------
         variant_filter : Dict[str, Any]
-            Variant filter from .z file with 'positions', 'allele1', 'allele2', 'rsids'
+            Variant filter from .z file with required fields:
+            'chromosome', 'positions', 'allele1', 'allele2', 'rsids'
         sample_indices : List[int], optional
             Sample indices to keep
         dtype : np.dtype
@@ -615,11 +578,17 @@ class BgenFileReader:
         positions = np.array(variant_filter['positions'], dtype=np.int32)
         
         # Find matching variants
-        matched_variants, matched_indices = self.bgi.find_variants_by_filter(
+        # Extract chromosome from filter - this must be present
+        # Z-file and BGEN should have matching chromosome format
+        if 'chromosome' not in variant_filter:
+            raise ValueError("Variant filter must contain 'chromosome' field")
+        chromosome = variant_filter['chromosome']
+        
+        matched_variants = self.bgi.find_variants_by_filter(
+            chromosome,
             positions,
             variant_filter['allele1'],
-            variant_filter['allele2'],
-            variant_filter['rsids']
+            variant_filter['allele2']
         )
         
         if len(matched_variants) == 0:

@@ -1,8 +1,8 @@
 """
 BGI (BGEN Index) file reader for efficient access to variant metadata.
 
-This module provides a custom SQLite-based reader for BGI files,
-optimized for ldcov's specific needs.
+This module provides a pandas-based reader for BGI files,
+optimized for ldcov's specific needs with improved efficiency and readability.
 """
 
 import sqlite3
@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional, Set
 import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -90,26 +91,30 @@ class BGIReader:
             ).fetchone()[0]
         return self._variant_count
     
-    def get_all_variants(self) -> np.ndarray:
+    def get_all_variants(self) -> pd.DataFrame:
         """
         Get metadata for all variants.
         
         Returns
         -------
-        np.ndarray
-            Structured array with variant metadata
+        pd.DataFrame
+            DataFrame with variant metadata
         """
         query = """
-        SELECT chromosome, position, rsid, number_of_alleles, 
-               allele1, allele2, file_start_position, size_in_bytes
+        SELECT chromosome as chrom, position as pos, rsid, number_of_alleles as n_alleles, 
+               allele1 as ref, allele2 as alt, file_start_position as file_offset, 
+               size_in_bytes as size_bytes
         FROM Variant 
         ORDER BY file_start_position
         """
         
-        rows = self.cursor.execute(query).fetchall()
-        return self._rows_to_structured_array(rows)
+        # Use pandas to read directly from SQL
+        df = pd.read_sql_query(query, self.conn)
+        # Handle NULL alt alleles
+        df['alt'] = df['alt'].fillna('')
+        return df
     
-    def get_variants_in_region(self, chrom: str, start: int, end: int) -> np.ndarray:
+    def get_variants_in_region(self, chrom: str, start: int, end: int) -> pd.DataFrame:
         """
         Get metadata for variants in a genomic region.
         
@@ -124,95 +129,118 @@ class BGIReader:
             
         Returns
         -------
-        np.ndarray
-            Structured array with variant metadata
+        pd.DataFrame
+            DataFrame with variant metadata
         """
         query = """
-        SELECT chromosome, position, rsid, number_of_alleles,
-               allele1, allele2, file_start_position, size_in_bytes
+        SELECT chromosome as chrom, position as pos, rsid, number_of_alleles as n_alleles,
+               allele1 as ref, allele2 as alt, file_start_position as file_offset,
+               size_in_bytes as size_bytes
         FROM Variant 
-        WHERE chromosome = ? AND position >= ? AND position <= ?
+        WHERE chromosome = :chrom AND position >= :start AND position <= :end
         ORDER BY position
         """
         
-        rows = self.cursor.execute(query, (chrom, start, end)).fetchall()
-        return self._rows_to_structured_array(rows)
+        # Use pandas with named parameters
+        df = pd.read_sql_query(query, self.conn, params={'chrom': chrom, 'start': start, 'end': end})
+        df['alt'] = df['alt'].fillna('')
+        return df
     
     def find_variants_by_filter(
         self, 
+        chromosome: str,
         positions: np.ndarray,
         alleles1: List[str],
-        alleles2: List[str],
-        rsids: List[str]
-    ) -> Tuple[np.ndarray, np.ndarray]:
+        alleles2: List[str]
+    ) -> pd.DataFrame:
         """
-        Find variants matching position/allele/rsid combinations.
+        Find variants matching chromosome, position, and allele combinations.
         
-        This method is optimized for matching variants from .z files,
-        handling allele order ambiguity.
+        This method matches variants exactly based on chromosome, position, 
+        allele1, and allele2. No allele swapping is performed.
         
         Parameters
         ----------
+        chromosome : str
+            Chromosome to filter on (required to prevent cross-chromosome matches)
         positions : np.ndarray
             Positions to match
         alleles1 : List[str]
-            First alleles
+            First alleles (must match exactly)
         alleles2 : List[str]
-            Second alleles  
-        rsids : List[str]
-            RSIDs to match
+            Second alleles (must match exactly)
             
         Returns
         -------
-        Tuple[np.ndarray, np.ndarray]
-            (matched_variants, original_indices)
+        pd.DataFrame
+            DataFrame with matched variants in order found
         """
-        # Get all variants for matching
-        all_query = """
-        SELECT chromosome, position, rsid, number_of_alleles,
-               allele1, allele2, file_start_position, size_in_bytes
-        FROM Variant
-        """
-        all_rows = self.cursor.execute(all_query).fetchall()
+        # Convert inputs to DataFrame for efficient operations
+        filter_df = pd.DataFrame({
+            'position': positions.astype(np.int32),
+            'allele1': alleles1,
+            'allele2': alleles2,
+            'original_idx': np.arange(len(positions))
+        })
         
-        # Build lookup structures
-        pos_allele_map = {}  # (pos, allele1_sorted, allele2_sorted) -> row
-        rsid_map = {}  # rsid -> row
+        # Get unique positions for efficient querying
+        unique_positions = filter_df['position'].unique()
         
-        for row in all_rows:
-            # Handle allele order by sorting
-            a1, a2 = row['allele1'], row['allele2'] or ''
-            alleles_key = tuple(sorted([a1, a2]))
-            pos_key = (row['position'], alleles_key)
-            pos_allele_map[pos_key] = row
+        # Process in batches to avoid SQL query limits
+        batch_size = 1000
+        all_db_variants = []
+        
+        for i in range(0, len(unique_positions), batch_size):
+            batch_positions = unique_positions[i:i + batch_size]
             
-            # Also index by rsid
-            rsid_map[row['rsid']] = row
-        
-        # Match variants
-        matched_rows = []
-        matched_indices = []
-        
-        for i, (pos, a1, a2, rsid) in enumerate(zip(positions, alleles1, alleles2, rsids)):
-            # Try position + alleles match first
-            alleles_key = tuple(sorted([a1, a2]))
-            pos_key = (int(pos), alleles_key)
+            # Create parameterized query with exact chromosome matching
+            placeholders = ','.join(['?'] * len(batch_positions))
+            query = f"""
+            SELECT chromosome, position, rsid, number_of_alleles,
+                   allele1, allele2, file_start_position, size_in_bytes
+            FROM Variant
+            WHERE chromosome = ? AND position IN ({placeholders})
+            """
+            params = [chromosome] + batch_positions.tolist()
             
-            if pos_key in pos_allele_map:
-                matched_rows.append(pos_allele_map[pos_key])
-                matched_indices.append(i)
-            elif rsid in rsid_map:
-                # Fall back to rsid match
-                matched_rows.append(rsid_map[rsid])
-                matched_indices.append(i)
+            # Read batch from database
+            batch_df = pd.read_sql_query(query, self.conn, params=params)
+            all_db_variants.append(batch_df)
         
-        # Convert to structured arrays
-        if matched_rows:
-            matched_variants = self._rows_to_structured_array(matched_rows)
-            return matched_variants, np.array(matched_indices, dtype=np.int32)
-        else:
-            # Return empty arrays with correct structure
-            return self._empty_variant_array(), np.array([], dtype=np.int32)
+        # Combine all batches
+        if all_db_variants:
+            db_df = pd.concat(all_db_variants, ignore_index=True)
+            
+            # Handle NULL allele2 values
+            db_df['allele2'] = db_df['allele2'].fillna('')
+            
+            # Exact match on position, allele1, and allele2
+            # Chromosome is already filtered in the SQL query if provided
+            merged = filter_df.merge(
+                db_df,
+                left_on=['position', 'allele1', 'allele2'],
+                right_on=['position', 'allele1', 'allele2'],
+                how='left',
+                suffixes=('_filter', '_db')
+            )
+            
+            # Filter to only matched variants
+            matched = merged[merged['chromosome'].notna()].copy()
+            
+            if not matched.empty:
+                # Sort by original index to maintain order
+                matched = matched.sort_values('original_idx')
+                
+                # Return DataFrame with renamed columns to match expected format
+                matched_variants = matched[['chromosome', 'position', 'rsid', 'number_of_alleles',
+                                          'allele1', 'allele2', 'file_start_position', 'size_in_bytes']].copy()
+                matched_variants.columns = ['chrom', 'pos', 'rsid', 'n_alleles', 'ref', 'alt', 'file_offset', 'size_bytes']
+                
+                return matched_variants
+        
+        # Return empty DataFrame with correct columns
+        empty_df = pd.DataFrame(columns=['chrom', 'pos', 'rsid', 'n_alleles', 'ref', 'alt', 'file_offset', 'size_bytes'])
+        return empty_df
     
     def get_file_offsets_by_indices(self, indices: List[int]) -> np.ndarray:
         """
@@ -239,55 +267,6 @@ class BGIReader:
         rows = self.cursor.execute(query, indices).fetchall()
         return np.array([r[0] for r in rows], dtype=np.int64)
     
-    def _rows_to_structured_array(self, rows: List[sqlite3.Row]) -> np.ndarray:
-        """Convert SQLite rows to numpy structured array."""
-        if not rows:
-            return self._empty_variant_array()
-        
-        # Define dtype for structured array
-        dtype = [
-            ('chrom', 'U10'),
-            ('pos', np.int32),
-            ('rsid', 'U50'),
-            ('n_alleles', np.int32),
-            ('ref', 'U100'),
-            ('alt', 'U100'),
-            ('file_offset', np.int64),
-            ('size_bytes', np.int32),
-        ]
-        
-        # Create array
-        n_variants = len(rows)
-        arr = np.empty(n_variants, dtype=dtype)
-        
-        # Fill array
-        for i, row in enumerate(rows):
-            arr[i] = (
-                row['chromosome'],
-                row['position'],
-                row['rsid'],
-                row['number_of_alleles'],
-                row['allele1'],
-                row['allele2'] or '',
-                row['file_start_position'],
-                row['size_in_bytes']
-            )
-        
-        return arr
-    
-    def _empty_variant_array(self) -> np.ndarray:
-        """Create empty structured array with correct dtype."""
-        dtype = [
-            ('chrom', 'U10'),
-            ('pos', np.int32),
-            ('rsid', 'U50'),
-            ('n_alleles', np.int32),
-            ('ref', 'U100'),
-            ('alt', 'U100'),
-            ('file_offset', np.int64),
-            ('size_bytes', np.int32),
-        ]
-        return np.empty(0, dtype=dtype)
     
     def close(self):
         """Close the database connection."""

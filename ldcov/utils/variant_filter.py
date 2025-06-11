@@ -68,6 +68,8 @@ def read_z_file(z_file_path: str) -> pd.DataFrame:
             f"Z file contains multiple chromosomes: {chromosomes}. Only single chromosome files are supported."
         )
 
+    chromosome = chromosomes[0]
+
     # Convert position to integer for sorting validation
     try:
         z_df["position"] = z_df["position"].astype(int)
@@ -96,41 +98,10 @@ def read_z_file(z_file_path: str) -> pd.DataFrame:
             f"Found {len(duplicate_positions)} variants at {len(positions) - unique_pos_count} duplicate positions (allowed if alleles differ)"
         )
 
-    # Normalize chromosome format (remove leading zeros, add 'chr' prefix if needed)
-    chromosome = _normalize_chromosome(chromosomes[0])
-    z_df["chromosome_normalized"] = chromosome
-
     logger.info(f"Loaded {len(z_df)} variants from chromosome {chromosome}")
     logger.info(f"Position range: {positions.min()} - {positions.max()}")
 
     return z_df
-
-
-def _normalize_chromosome(chrom: str) -> str:
-    """
-    Normalize chromosome name to standard format.
-
-    Parameters:
-    -----------
-    chrom : str
-        Chromosome name (e.g., "01", "1", "chr1")
-
-    Returns:
-    --------
-    str
-        Normalized chromosome name (e.g., "1")
-    """
-    # Remove 'chr' prefix if present
-    if chrom.startswith("chr"):
-        chrom = chrom[3:]
-
-    # Remove leading zeros
-    try:
-        chrom_int = int(chrom)
-        return str(chrom_int)
-    except ValueError:
-        # For non-numeric chromosomes (X, Y, MT), return as-is
-        return chrom.upper()
 
 
 def create_variant_filter_from_z(z_df: pd.DataFrame) -> Dict[str, Any]:
@@ -146,13 +117,15 @@ def create_variant_filter_from_z(z_df: pd.DataFrame) -> Dict[str, Any]:
     --------
     dict
         Filter dictionary with keys:
-        - chromosome: str, normalized chromosome name
+        - chromosome: str, chromosome name (exact format from z file)
         - positions: list, list of positions to extract
         - rsids: list, list of rsids in the same order as positions
-        - expected_order: list, indices for sorting variants to match .z file order
+        - allele1: list, list of first alleles
+        - allele2: list, list of second alleles
+        - z_file_order: list, indices for sorting variants to match .z file order
     """
     return {
-        "chromosome": z_df["chromosome_normalized"].iloc[0],
+        "chromosome": z_df["chromosome"].iloc[0],
         "positions": z_df["position"].tolist(),
         "rsids": z_df["rsid"].tolist(),
         "allele1": z_df["allele1"].tolist(),

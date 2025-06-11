@@ -20,7 +20,6 @@ from ldcov.utils.region_utils import parse_region
 from ldcov.utils.variant_filter import (
     read_z_file,
     create_variant_filter_from_z,
-    _normalize_chromosome,
 )
 from ldcov.utils.categorical_utils import one_hot_encode_categorical
 from ldcov.io.bgen_reader import load_bgen
@@ -128,10 +127,8 @@ class TestUtils(unittest.TestCase):
         self.assertIn("rsid", df.columns)
         self.assertEqual(df.iloc[0]["rsid"], "rs1")
 
-    def test_z_file_chromosome_normalization(self):
-        """Test chromosome normalization in Z-files."""
-        # Test different chromosome formats in separate files (single chromosome only)
-
+    def test_z_file_original_chromosome_format(self):
+        """Test that Z-files preserve original chromosome format."""
         # Test chr1 format
         z_data1 = pd.DataFrame(
             {
@@ -146,7 +143,7 @@ class TestUtils(unittest.TestCase):
         z_data1.to_csv(z_file1, sep="\t", index=False)
 
         z_df1 = read_z_file(z_file1)
-        self.assertEqual(z_df1["chromosome_normalized"].iloc[0], "1")
+        self.assertEqual(z_df1["chromosome"].iloc[0], "chr1")  # Keeps original format
 
         # Test 01 format
         z_data2 = pd.DataFrame(
@@ -162,20 +159,7 @@ class TestUtils(unittest.TestCase):
         z_data2.to_csv(z_file2, sep="\t", index=False)
 
         z_df2 = read_z_file(z_file2)
-        self.assertEqual(z_df2["chromosome_normalized"].iloc[0], "1")
-
-    def test_normalize_chromosome(self):
-        """Test chromosome normalization function."""
-        # Test various formats
-        self.assertEqual(_normalize_chromosome("1"), "1")
-        self.assertEqual(_normalize_chromosome("01"), "1")
-        self.assertEqual(_normalize_chromosome("chr1"), "1")
-        self.assertEqual(_normalize_chromosome("X"), "X")
-        self.assertEqual(_normalize_chromosome("chrX"), "X")
-        self.assertEqual(_normalize_chromosome("Y"), "Y")
-        self.assertEqual(_normalize_chromosome("chrY"), "Y")
-        self.assertEqual(_normalize_chromosome("MT"), "MT")
-        self.assertEqual(_normalize_chromosome("M"), "M")
+        self.assertEqual(z_df2["chromosome"].iloc[0], "01")  # Keeps original format
 
     def test_create_variant_filter_from_z(self):
         """Test creating variant filter from Z-file."""
