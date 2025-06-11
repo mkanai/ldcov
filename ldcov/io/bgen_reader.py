@@ -1,14 +1,17 @@
 """
 BGEN file reader for efficient reading of BGEN genotype files.
 
-This module provides functions for reading BGEN files.
+This module provides functions for reading BGEN files with mandatory BGI index support.
 """
 
+import os
 import numpy as np
 import pandas as pd
 from typing import Optional, List, Tuple, Dict, Any, Union
 import logging
 from tqdm import tqdm
+
+from .bgi_reader import BGIReader
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +274,7 @@ def _report_nan_error(
 
 class BgenFileReader:
     """
-    Reader for BGEN format files with support for indexed access.
+    Reader for BGEN format files with mandatory BGI index support.
     """
 
     def __init__(
@@ -289,21 +292,47 @@ class BgenFileReader:
         file_path : str
             Path to BGEN file
         index_path : str, optional
-            Path to BGI index file (will use file_path + '.bgi' if not provided)
+            Path to BGI index file. If None, will look for file_path + '.bgi'
         sample_path : str, optional
             Path to sample file
         show_progress : bool, optional
             Whether to show progress bars (default: True)
+            
+        Raises:
+        -------
+        FileNotFoundError
+            If BGEN file or required BGI index is not found
+        ImportError
+            If bgen module is not available
         """
         self.file_path = file_path
-        self.index_path = index_path
         self.sample_path = sample_path
         self.show_progress = show_progress
 
         # Check if bgen module is available
         if not BGEN_AVAILABLE:
             raise ImportError("bgen module not available. Install with 'pip install bgen'")
-
+            
+        # Check BGEN file exists
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"BGEN file not found: {file_path}")
+        
+        # Determine BGI path
+        if index_path is not None:
+            self.bgi_path = index_path
+        else:
+            self.bgi_path = file_path + '.bgi'
+            
+        # BGI is mandatory
+        if not os.path.exists(self.bgi_path):
+            raise FileNotFoundError(
+                f"BGI index required but not found: {self.bgi_path}\n"
+                f"Please create index using: bgenix -g {file_path}"
+            )
+        
+        # Open BGI for metadata access
+        self.bgi = BGIReader(self.bgi_path)
+        
         # Open BGEN file and get metadata
         self._open_bgen()
 
@@ -311,7 +340,7 @@ class BgenFileReader:
         """Open BGEN file and initialize metadata."""
         logger.info(f"Opening BGEN file: {self.file_path}")
         try:
-            # BgenReader will automatically use the .bgi index file if it exists
+            # BgenReader will use the BGI index we verified exists
             self.bgen_file = BgenReader(
                 self.file_path, sample_path=self.sample_path if self.sample_path else ""
             )
@@ -319,53 +348,161 @@ class BgenFileReader:
             # Get metadata
             self.sample_ids = self.bgen_file.samples
             self.n_samples = len(self.sample_ids)
+            
+            # Get variant count from BGI
+            self.n_variants = self.bgi.get_variant_count()
 
-            logger.info(f"Opened BGEN file with {self.n_samples} samples")
+            logger.info(f"Opened BGEN file with {self.n_samples} samples and {self.n_variants} variants")
 
         except Exception as e:
             logger.error(f"Error opening BGEN file: {e}")
             raise
 
     def close(self):
-        """Close BGEN file."""
+        """Close BGEN and BGI files."""
         if hasattr(self, "bgen_file"):
             self.bgen_file.close()
+        if hasattr(self, "bgi"):
+            self.bgi.close()
 
-    def get_variants_in_region(self, chrom: str, start_pos: int, end_pos: int) -> pd.DataFrame:
+    def _load_variants(
+        self,
+        variant_metadata: np.ndarray,
+        sample_indices: Optional[List[int]] = None,
+        dtype: np.dtype = np.float64,
+    ) -> Tuple[np.ndarray, pd.DataFrame]:
         """
-        Get variant information for a genomic region.
-
+        Load variant dosages using metadata from BGI.
+        
+        This is the unified loading method that handles all scenarios.
+        
         Parameters:
         -----------
-        chrom : str
-            Chromosome
-        start_pos : int
-            Start position
-        end_pos : int
-            End position
-
+        variant_metadata : np.ndarray
+            Structured array from BGI with variant metadata
+        sample_indices : List[int], optional
+            Sample indices to keep
+        dtype : np.dtype
+            Data type for dosages
+            
         Returns:
         --------
-        pandas.DataFrame
-            Variant information
+        Tuple[np.ndarray, pd.DataFrame]
+            (dosages, variant_info)
         """
-        try:
-            search_chrom = _normalize_chromosome(chrom)
-            variants_in_region = self.bgen_file.fetch(search_chrom, start_pos, end_pos)
-
-            variant_info = [
-                _extract_variant_info(variant, i) for i, variant in enumerate(variants_in_region)
-            ]
-
-            if not variant_info:
-                logger.warning(f"No variants found in region {chrom}:{start_pos}-{end_pos}")
-                return pd.DataFrame()
-
-            return pd.DataFrame(variant_info)
-
-        except Exception as e:
-            logger.warning(f"Error querying {chrom}:{start_pos}-{end_pos}: {e}")
-            return pd.DataFrame()
+        n_variants = len(variant_metadata)
+        if n_variants == 0:
+            n_samples_out = len(sample_indices) if sample_indices else self.n_samples
+            return np.empty((n_samples_out, 0), dtype=dtype), pd.DataFrame()
+        
+        # Determine output dimensions
+        n_samples_out = len(sample_indices) if sample_indices else self.n_samples
+        
+        # Pre-allocate dosage array
+        dosages = np.empty((n_samples_out, n_variants), dtype=dtype)
+        
+        # For efficient loading, we'll use the bgen library's index-based access
+        # First, create a mapping of positions to our output columns
+        position_to_col = {}
+        chrom_pos_to_col = {}
+        for i, meta in enumerate(variant_metadata):
+            chrom_pos_to_col[(meta['chrom'], meta['pos'])] = i
+            position_to_col[meta['pos']] = i
+        
+        # Load variants
+        loaded = 0
+        
+        if self.show_progress:
+            # For specific regions/filters, use fetch if possible
+            if n_variants < self.n_variants / 2:  # Heuristic: use fetch for small subsets
+                # Get unique chromosome from metadata
+                chroms = np.unique(variant_metadata['chrom'])
+                
+                with tqdm(total=n_variants, desc="Loading variants", unit="variants") as pbar:
+                    for chrom in chroms:
+                        chrom_mask = variant_metadata['chrom'] == chrom
+                        if not np.any(chrom_mask):
+                            continue
+                            
+                        chrom_variants = variant_metadata[chrom_mask]
+                        min_pos = np.min(chrom_variants['pos'])
+                        max_pos = np.max(chrom_variants['pos'])
+                        
+                        # Fetch variants in this region
+                        for variant in self.bgen_file.fetch(chrom, min_pos, max_pos):
+                            key = (variant.chrom, variant.pos)
+                            if key in chrom_pos_to_col:
+                                col_idx = chrom_pos_to_col[key]
+                                self._process_variant_dosage(variant, col_idx, dosages, col_idx, sample_indices)
+                                loaded += 1
+                                pbar.update(1)
+                                
+                                if loaded >= n_variants:
+                                    break
+                        
+                        if loaded >= n_variants:
+                            break
+            else:
+                # For all variants or large subsets, iterate through all
+                with tqdm(total=n_variants, desc="Loading variants", unit="variants") as pbar:
+                    for variant in self.bgen_file:
+                        key = (variant.chrom, variant.pos)
+                        if key in chrom_pos_to_col:
+                            col_idx = chrom_pos_to_col[key]
+                            self._process_variant_dosage(variant, col_idx, dosages, col_idx, sample_indices)
+                            loaded += 1
+                            pbar.update(1)
+                            
+                            if loaded >= n_variants:
+                                break
+        else:
+            # Same logic without progress bar
+            if n_variants < self.n_variants / 2:
+                chroms = np.unique(variant_metadata['chrom'])
+                for chrom in chroms:
+                    chrom_mask = variant_metadata['chrom'] == chrom
+                    if not np.any(chrom_mask):
+                        continue
+                        
+                    chrom_variants = variant_metadata[chrom_mask]
+                    min_pos = np.min(chrom_variants['pos'])
+                    max_pos = np.max(chrom_variants['pos'])
+                    
+                    for variant in self.bgen_file.fetch(chrom, min_pos, max_pos):
+                        key = (variant.chrom, variant.pos)
+                        if key in chrom_pos_to_col:
+                            col_idx = chrom_pos_to_col[key]
+                            self._process_variant_dosage(variant, col_idx, dosages, col_idx, sample_indices)
+                            loaded += 1
+                            
+                            if loaded >= n_variants:
+                                break
+                    
+                    if loaded >= n_variants:
+                        break
+            else:
+                for variant in self.bgen_file:
+                    key = (variant.chrom, variant.pos)
+                    if key in chrom_pos_to_col:
+                        col_idx = chrom_pos_to_col[key]
+                        self._process_variant_dosage(variant, col_idx, dosages, col_idx, sample_indices)
+                        loaded += 1
+                        
+                        if loaded >= n_variants:
+                            break
+        
+        # Convert metadata to DataFrame
+        variant_info = pd.DataFrame({
+            'chrom': variant_metadata['chrom'],
+            'pos': variant_metadata['pos'],
+            'id': variant_metadata['rsid'],
+            'rsid': variant_metadata['rsid'],
+            'ref': variant_metadata['ref'],
+            'alt': variant_metadata['alt'],
+            'idx': np.arange(n_variants)
+        })
+        
+        return dosages, variant_info
 
     def get_sample_indices(self, sample_ids_to_keep: List[str]) -> Tuple[List[int], List[str]]:
         """
@@ -416,21 +553,6 @@ class BgenFileReader:
 
         return indices, filtered_ids
 
-    def _determine_n_samples_out(
-        self, sample_indices: Optional[List[int]], log: bool = True
-    ) -> int:
-        """Determine output number of samples based on filtering."""
-        if sample_indices is not None:
-            n_samples_out = len(sample_indices)
-            if log:
-                logger.info(
-                    f"Loading variants with {n_samples_out} samples (filtered from {self.n_samples})"
-                )
-        else:
-            n_samples_out = self.n_samples
-            if log:
-                logger.info(f"Loading variants with {self.n_samples} samples")
-        return n_samples_out
 
     def _process_variant_dosage(
         self,
@@ -465,281 +587,117 @@ class BgenFileReader:
             else:
                 dosages[:, col_idx] = dosage
         except Exception as e:
-            logger.warning(f"Error computing dosage for variant {idx} ({variant.rsid}): {e}")
+            logger.warning(f"Error computing dosage for variant at column {col_idx}: {e}")
             dosages[:, col_idx] = np.nan
 
-    def _empty_result(
-        self, n_samples_out: int, dtype: np.dtype
-    ) -> Tuple[np.ndarray, pd.DataFrame, int]:
-        """Return empty result arrays."""
-        return np.zeros((n_samples_out, 0), dtype=dtype), pd.DataFrame(), n_samples_out
 
-    def _prepare_all_variants(self) -> Tuple[Optional[int], None, None]:
-        """
-        Prepare to load all variants.
 
-        Returns:
-        --------
-        tuple
-            (variant_count, None, None) - for all variants we just need the count
-        """
-        try:
-            logger.info("Counting variants...")
-            if self.show_progress:
-                variant_count = sum(
-                    1 for _ in tqdm(self.bgen_file, desc="Counting variants", unit="variants")
-                )
-            else:
-                variant_count = sum(1 for _ in self.bgen_file)
-            self._open_bgen()  # Re-open to reset iterator
-            return variant_count, None, None
-        except:
-            return None, None, None
-
-    def _prepare_region_variants(
-        self, chrom: str, start_pos: int, end_pos: int
-    ) -> Tuple[str, Tuple[int, int], None]:
-        """
-        Prepare to load variants from a region.
-
-        Returns:
-        --------
-        tuple
-            (normalized_chrom, (start_pos, end_pos), None)
-        """
-        search_chrom = _normalize_chromosome(chrom)
-        return search_chrom, (start_pos, end_pos), None
-
-    def _prepare_filtered_variants(
-        self, variant_filter: Dict[str, Any]
-    ) -> Tuple[List[Dict[str, Any]], List[int], Dict[int, int]]:
-        """
-        Prepare to load filtered variants.
-
-        Returns:
-        --------
-        tuple
-            (filtered_variant_info, bgen_indices, indices_to_output)
-        """
-        # First pass: collect variant info to find matches
-        logger.info("First pass: scanning for variants matching filter...")
-        all_variant_info = []
-        variant_to_bgen_idx = {}
-        rsid_to_bgen_idx = {}
-
-        iterator = (
-            tqdm(self.bgen_file, desc="Scanning variants", unit="variants")
-            if self.show_progress
-            else self.bgen_file
-        )
-        for i, variant in enumerate(iterator):
-            var_info = _extract_variant_info(variant, i)
-            all_variant_info.append(var_info)
-
-            # Create lookup keys
-            alleles_sorted = tuple(sorted([var_info["ref"], var_info["alt"]]))
-            key = (var_info["pos"], alleles_sorted)
-            variant_to_bgen_idx[key] = i
-            rsid_to_bgen_idx[var_info["id"]] = i
-
-        # Find which variants from filter are in BGEN
-        matches = []
-
-        for z_idx, (pos, a1, a2, rsid) in enumerate(
-            zip(
-                variant_filter["positions"],
-                variant_filter["allele1"],
-                variant_filter["allele2"],
-                variant_filter["rsids"],
-            )
-        ):
-            alleles_sorted = tuple(sorted([a1, a2]))
-            key = (pos, alleles_sorted)
-
-            if key in variant_to_bgen_idx:
-                matches.append((z_idx, variant_to_bgen_idx[key]))
-            elif rsid in rsid_to_bgen_idx:
-                matches.append((z_idx, rsid_to_bgen_idx[rsid]))
-
-        if not matches:
-            raise ValueError("No variants from filter found in BGEN file")
-
-        logger.info(
-            f"Found {len(matches)} out of {len(variant_filter['positions'])} variants from filter"
-        )
-
-        # Sort matches by z_idx to maintain order
-        matches.sort(key=lambda x: x[0])
-        z_indices, bgen_indices = zip(*matches)
-
-        # Get filtered variant info in correct order
-        filtered_variant_info = [all_variant_info[idx] for idx in bgen_indices]
-
-        # Create mapping for quick lookup
-        indices_to_output = {idx: i for i, idx in enumerate(bgen_indices)}
-
-        self._open_bgen()  # Reset for second pass
-
-        return filtered_variant_info, list(bgen_indices), indices_to_output
-
-    def _load_dosages(
+    def load_all_variants(
         self,
-        loading_mode: str,
-        variant_count: Optional[int] = None,
-        region_params: Optional[Tuple[str, Tuple[int, int]]] = None,
-        filtered_params: Optional[Tuple[List[Dict], List[int], Dict[int, int]]] = None,
-        dtype: np.dtype = np.float64,
         sample_indices: Optional[List[int]] = None,
-    ) -> Tuple[np.ndarray, pd.DataFrame, int]:
+        dtype: np.dtype = np.float64,
+    ) -> Tuple[np.ndarray, pd.DataFrame]:
         """
-        Unified method to load dosages based on loading mode.
-
+        Load all variants using BGI metadata.
+        
         Parameters:
         -----------
-        loading_mode : str
-            'all', 'region', or 'filtered'
-        variant_count : int, optional
-            For 'all' mode - number of variants
-        region_params : tuple, optional
-            For 'region' mode - (search_chrom, (start_pos, end_pos))
-        filtered_params : tuple, optional
-            For 'filtered' mode - (variant_info, indices, mapping)
-        dtype : numpy.dtype
+        sample_indices : List[int], optional
+            Sample indices to keep
+        dtype : np.dtype
             Data type for dosages
-        sample_indices : list of int, optional
-            Sample filtering
+            
+        Returns:
+        --------
+        Tuple[np.ndarray, pd.DataFrame]
+            (dosages, variant_info)
         """
-        n_samples_out = self._determine_n_samples_out(sample_indices)
-
-        if loading_mode == "all":
-            # Load all variants
-            if variant_count is not None:
-                # Pre-allocated approach
-                logger.debug(f"Pre-allocating arrays for {variant_count} variants")
-                dosages = np.empty((n_samples_out, variant_count), dtype=dtype)
-                variant_info_list = []
-
-                iterator = (
-                    tqdm(
-                        self.bgen_file,
-                        total=variant_count,
-                        desc="Loading variants",
-                        unit="variants",
-                    )
-                    if self.show_progress
-                    else self.bgen_file
-                )
-                for i, variant in enumerate(iterator):
-                    variant_info_list.append(_extract_variant_info(variant, i))
-                    self._process_variant_dosage(variant, i, dosages, i, sample_indices)
-
-                variant_info = pd.DataFrame(variant_info_list)
-                return dosages, variant_info, n_samples_out
-            else:
-                # Fallback approach
-                logger.debug("Using fallback approach without pre-allocation")
-                dosage_list = []
-                variant_info_list = []
-
-                iterator = (
-                    tqdm(self.bgen_file, desc="Loading variants", unit="variants")
-                    if self.show_progress
-                    else self.bgen_file
-                )
-                for i, variant in enumerate(iterator):
-                    variant_info_list.append(_extract_variant_info(variant, i))
-
-                    dosage = _compute_dosage_from_variant(variant)
-                    if sample_indices is not None:
-                        dosage = dosage[sample_indices]
-                    dosage_list.append(dosage)
-
-                if not dosage_list:
-                    return self._empty_result(n_samples_out, dtype)
-
-                dosages = np.column_stack(dosage_list).astype(dtype)
-                variant_info = pd.DataFrame(variant_info_list)
-                return dosages, variant_info, n_samples_out
-
-        elif loading_mode == "region":
-            # Load region variants
-            search_chrom, (start_pos, end_pos) = region_params
-            logger.debug(f"Loading variants from region {search_chrom}:{start_pos}-{end_pos}")
-
-            variants_in_region = list(self.bgen_file.fetch(search_chrom, start_pos, end_pos))
-
-            if not variants_in_region:
-                logger.warning(f"No variants found in region {search_chrom}:{start_pos}-{end_pos}")
-                return self._empty_result(n_samples_out, dtype)
-
-            # Pre-allocate arrays
-            n_variants = len(variants_in_region)
-            dosages = np.empty((n_samples_out, n_variants), dtype=dtype)
-            variant_info_list = []
-
-            # Process variants
-            iterator = (
-                tqdm(
-                    variants_in_region,
-                    desc=f"Loading region {search_chrom}:{start_pos}-{end_pos}",
-                    unit="variants",
-                )
-                if self.show_progress
-                else variants_in_region
-            )
-            for i, variant in enumerate(iterator):
-                variant_info_list.append(_extract_variant_info(variant, i))
-                self._process_variant_dosage(variant, i, dosages, i, sample_indices)
-
-            variant_info = pd.DataFrame(variant_info_list)
-            return dosages, variant_info, n_samples_out
-
-        elif loading_mode == "filtered":
-            # Load filtered variants
-            filtered_variant_info, bgen_indices, indices_to_output = filtered_params
-
-            logger.info("Second pass: loading dosages for matched variants...")
-
-            # Pre-allocate arrays
-            n_variants = len(bgen_indices)
-            dosages = np.empty((n_samples_out, n_variants), dtype=dtype)
-
-            # Process only the variants we need
-            processed = 0
-            if self.show_progress:
-                with tqdm(
-                    total=n_variants, desc="Loading filtered variants", unit="variants"
-                ) as pbar:
-                    for i, variant in enumerate(self.bgen_file):
-                        if i in indices_to_output:
-                            output_idx = indices_to_output[i]
-                            self._process_variant_dosage(
-                                variant, i, dosages, output_idx, sample_indices
-                            )
-                            processed += 1
-                            pbar.update(1)
-
-                            # Stop if we've processed all needed variants
-                            if processed == n_variants:
-                                break
-            else:
-                for i, variant in enumerate(self.bgen_file):
-                    if i in indices_to_output:
-                        output_idx = indices_to_output[i]
-                        self._process_variant_dosage(
-                            variant, i, dosages, output_idx, sample_indices
-                        )
-                        processed += 1
-
-                        # Stop if we've processed all needed variants
-                        if processed == n_variants:
-                            break
-
-            variant_info = pd.DataFrame(filtered_variant_info)
-            return dosages, variant_info, n_samples_out
-
-        else:
-            raise ValueError(f"Unknown loading mode: {loading_mode}")
+        logger.info("Loading all variants from BGEN file")
+        variant_metadata = self.bgi.get_all_variants()
+        return self._load_variants(variant_metadata, sample_indices, dtype)
+    
+    def load_region_variants(
+        self,
+        chrom: str,
+        start_pos: int, 
+        end_pos: int,
+        sample_indices: Optional[List[int]] = None,
+        dtype: np.dtype = np.float64,
+    ) -> Tuple[np.ndarray, pd.DataFrame]:
+        """
+        Load variants in a genomic region using BGI.
+        
+        Parameters:
+        -----------
+        chrom : str
+            Chromosome
+        start_pos : int
+            Start position (inclusive)
+        end_pos : int
+            End position (inclusive)
+        sample_indices : List[int], optional
+            Sample indices to keep
+        dtype : np.dtype
+            Data type for dosages
+            
+        Returns:
+        --------
+        Tuple[np.ndarray, pd.DataFrame]
+            (dosages, variant_info)
+        """
+        search_chrom = _normalize_chromosome(chrom)
+        logger.info(f"Loading variants from region {search_chrom}:{start_pos}-{end_pos}")
+        
+        variant_metadata = self.bgi.get_variants_in_region(search_chrom, start_pos, end_pos)
+        if len(variant_metadata) == 0:
+            logger.warning(f"No variants found in region {chrom}:{start_pos}-{end_pos}")
+        
+        return self._load_variants(variant_metadata, sample_indices, dtype)
+    
+    def load_filtered_variants(
+        self,
+        variant_filter: Dict[str, Any],
+        sample_indices: Optional[List[int]] = None,
+        dtype: np.dtype = np.float64,
+    ) -> Tuple[np.ndarray, pd.DataFrame]:
+        """
+        Load variants matching a filter using BGI.
+        
+        Parameters:
+        -----------
+        variant_filter : Dict[str, Any]
+            Variant filter from .z file with 'positions', 'allele1', 'allele2', 'rsids'
+        sample_indices : List[int], optional
+            Sample indices to keep
+        dtype : np.dtype
+            Data type for dosages
+            
+        Returns:
+        --------
+        Tuple[np.ndarray, pd.DataFrame]
+            (dosages, variant_info)
+        """
+        logger.info("Loading filtered variants matching .z file")
+        
+        # Convert positions to numpy array if not already
+        positions = np.array(variant_filter['positions'], dtype=np.int32)
+        
+        # Find matching variants
+        matched_variants, matched_indices = self.bgi.find_variants_by_filter(
+            positions,
+            variant_filter['allele1'],
+            variant_filter['allele2'],
+            variant_filter['rsids']
+        )
+        
+        if len(matched_variants) == 0:
+            raise ValueError("No variants from filter found in BGEN file")
+        
+        logger.info(
+            f"Found {len(matched_variants)} out of {len(positions)} variants from filter"
+        )
+        
+        return self._load_variants(matched_variants, sample_indices, dtype)
 
     def __del__(self):
         """Clean up when object is deleted."""
@@ -765,7 +723,7 @@ def load_bgen(
     file_path : str
         Path to BGEN file
     index_path : str, optional
-        Path to BGI index file
+        Path to BGI index file. If None, will look for file_path + '.bgi'
     sample_path : str, optional
         Path to sample file
     region : str, optional
@@ -789,7 +747,7 @@ def load_bgen(
         If variant_filter is provided, variants are ordered according to the .z file order
         If sample_ids is provided, only those samples are returned
     """
-    # Open BGEN file
+    # Open BGEN file (BGI index is required)
     bgen_reader = BgenFileReader(
         file_path=file_path,
         index_path=index_path,
@@ -817,18 +775,9 @@ def load_bgen(
                 logger.info(f"Found {len(sample_indices)} of {len(sample_ids)} requested samples")
 
         if variant_filter is not None:
-            # Prepare filtered variants
-            logger.info("Loading filtered variants matching .z file")
-            filtered_variant_info, bgen_indices, indices_to_output = (
-                bgen_reader._prepare_filtered_variants(variant_filter)
-            )
-
-            # Load dosages
-            dosages, variant_info, n_samples = bgen_reader._load_dosages(
-                "filtered",
-                filtered_params=(filtered_variant_info, bgen_indices, indices_to_output),
-                dtype=dtype,
-                sample_indices=sample_indices,
+            # Load filtered variants
+            dosages, variant_info = bgen_reader.load_filtered_variants(
+                variant_filter, sample_indices, dtype
             )
 
         elif region is not None:
@@ -837,28 +786,15 @@ def load_bgen(
 
             chrom, pos_range = parse_region(region)
             start_pos, end_pos = pos_range
-            logger.info(f"Loading region: {chrom}:{start_pos}-{end_pos}")
 
-            # Prepare region parameters
-            search_chrom, region_bounds, _ = bgen_reader._prepare_region_variants(
-                chrom, start_pos, end_pos
-            )
-
-            # Load dosages
-            dosages, variant_info, n_samples = bgen_reader._load_dosages(
-                "region",
-                region_params=(search_chrom, region_bounds),
-                dtype=dtype,
-                sample_indices=sample_indices,
+            # Load region variants
+            dosages, variant_info = bgen_reader.load_region_variants(
+                chrom, start_pos, end_pos, sample_indices, dtype
             )
         else:
-            # Prepare all variants
-            logger.info("Loading all variants from BGEN file")
-            variant_count, _, _ = bgen_reader._prepare_all_variants()
-
-            # Load dosages
-            dosages, variant_info, n_samples = bgen_reader._load_dosages(
-                "all", variant_count=variant_count, dtype=dtype, sample_indices=sample_indices
+            # Load all variants
+            dosages, variant_info = bgen_reader.load_all_variants(
+                sample_indices, dtype
             )
 
         # Check if we loaded any variants
