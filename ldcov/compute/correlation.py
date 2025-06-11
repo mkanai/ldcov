@@ -82,11 +82,10 @@ def load_and_adjust_genotypes(
     # Process .z file if provided
     variant_filter = None
     if z_file is not None:
-        from ..utils.variant_filter import read_z_file, create_variant_filter_from_z
+        from ..utils.variant_filter import load_variant_filter
 
         logger.info(f"Reading variant filter from .z file: {z_file}")
-        z_df = read_z_file(z_file)
-        variant_filter = create_variant_filter_from_z(z_df)
+        variant_filter = load_variant_filter(z_file)
 
     # Determine which samples to load based on covariate/projection data
     samples_to_load = None

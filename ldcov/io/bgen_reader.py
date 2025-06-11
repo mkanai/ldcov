@@ -630,7 +630,7 @@ def load_bgen(
     region : str, optional
         Genomic region in format "chr:start-end"
     variant_filter : dict, optional
-        Variant filter from .z file (from create_variant_filter_from_z)
+        Variant filter from .z file (from load_variant_filter)
     sample_ids : list of str, optional
         Sample IDs to keep. If None, all samples are loaded.
     dtype : numpy.dtype, optional

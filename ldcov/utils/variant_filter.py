@@ -2,21 +2,25 @@
 Utilities for reading and validating variant filter files (.z format).
 
 This module provides functions to read .z files that specify which variants
-to extract from BGEN files and in what order.
+to extract from BGEN files and in what order. Z-files are tab-delimited files
+containing variant information with exact chromosome/position/allele matching.
 """
 
 import pandas as pd
 import numpy as np
-from typing import List, Tuple, Dict, Any
+from typing import Dict, Any
 import logging
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Required columns for z-files
+REQUIRED_COLUMNS = ["rsid", "chromosome", "position", "allele1", "allele2"]
 
-def read_z_file(z_file_path: str) -> pd.DataFrame:
+
+def load_variant_filter(z_file_path: str) -> Dict[str, Any]:
     """
-    Read and validate a .z file containing variant information.
+    Load and validate a .z file, returning a variant filter dictionary.
 
     The .z file format is expected to have columns:
     - rsid: variant ID
@@ -32,45 +36,111 @@ def read_z_file(z_file_path: str) -> pd.DataFrame:
 
     Returns:
     --------
-    pandas.DataFrame
-        DataFrame with variant information, validated and sorted by position
+    Dict[str, Any]
+        Filter dictionary with keys:
+        - chromosome: str, chromosome name (exact format from z file)
+        - positions: list of int, genomic positions to extract
+        - rsids: list of str, variant IDs in same order as positions
+        - allele1: list of str, first alleles (reference)
+        - allele2: list of str, second alleles (alternative)
+        - z_file_order: list of int, original indices for order preservation
 
     Raises:
     -------
+    FileNotFoundError
+        If the z file doesn't exist
     ValueError
         If file format is invalid, contains multiple chromosomes, or positions are not sorted
     """
     logger.info(f"Reading variant filter file: {z_file_path}")
 
-    if not Path(z_file_path).exists():
+    # Read and validate the z-file
+    z_df = _read_and_validate_z_file(z_file_path)
+
+    # Log summary
+    chromosome = z_df["chromosome"].iloc[0]
+    positions = z_df["position"].values
+    logger.info(f"Loaded {len(z_df)} variants from chromosome {chromosome}")
+    logger.info(f"Position range: {positions.min():,} - {positions.max():,}")
+
+    # Create filter dictionary
+    return {
+        "chromosome": chromosome,
+        "positions": z_df["position"].tolist(),
+        "rsids": z_df["rsid"].tolist(),
+        "allele1": z_df["allele1"].tolist(),
+        "allele2": z_df["allele2"].tolist(),
+        "z_file_order": list(range(len(z_df))),
+    }
+
+
+def get_filter_summary(variant_filter: Dict[str, Any]) -> str:
+    """
+    Get a human-readable summary of a variant filter.
+
+    Parameters:
+    -----------
+    variant_filter : Dict[str, Any]
+        Filter dictionary from load_variant_filter()
+
+    Returns:
+    --------
+    str
+        Summary string describing the filter
+    """
+    n_variants = len(variant_filter["positions"])
+    
+    if n_variants == 0:
+        return "Empty variant filter"
+    
+    chromosome = variant_filter["chromosome"]
+    positions = variant_filter["positions"]
+    min_pos = min(positions)
+    max_pos = max(positions)
+    
+    return (
+        f"Variant filter: {n_variants} variants on chromosome {chromosome} "
+        f"(positions {min_pos:,} - {max_pos:,})"
+    )
+
+
+def _read_and_validate_z_file(z_file_path: str) -> pd.DataFrame:
+    """Read and validate a z-file, returning a cleaned DataFrame."""
+    z_file = Path(z_file_path)
+    if not z_file.exists():
         raise FileNotFoundError(f"Z file not found: {z_file_path}")
 
-    # Read the .z file
+    # Read the file
     try:
-        z_df = pd.read_csv(z_file_path, sep=r"\s+", dtype=str)
+        z_df = pd.read_csv(z_file, sep=r"\s+", dtype=str)
     except Exception as e:
         raise ValueError(f"Error reading .z file {z_file_path}: {e}")
 
-    # Validate required columns
-    required_cols = ["rsid", "chromosome", "position", "allele1", "allele2"]
-    missing_cols = [col for col in required_cols if col not in z_df.columns]
-    if missing_cols:
-        raise ValueError(f"Missing required columns in .z file: {missing_cols}")
-
-    # Check that we have at least one variant
+    # Validate structure
     if len(z_df) == 0:
         raise ValueError("Z file contains no variants")
 
-    # Validate chromosome consistency
+    missing_cols = [col for col in REQUIRED_COLUMNS if col not in z_df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns in .z file: {missing_cols}")
+
+    # Validate content
+    _validate_z_file_content(z_df)
+
+    return z_df
+
+
+def _validate_z_file_content(z_df: pd.DataFrame) -> None:
+    """Validate the content of a z-file DataFrame."""
+    # Check chromosome consistency
     chromosomes = z_df["chromosome"].unique()
     if len(chromosomes) > 1:
         raise ValueError(
-            f"Z file contains multiple chromosomes: {chromosomes}. Only single chromosome files are supported."
+            f"Z file contains multiple chromosomes: {chromosomes}. "
+            "Only single chromosome files are supported."
         )
 
-    chromosome = chromosomes[0]
-
-    # Convert position to integer for sorting validation
+    # Convert and validate positions
     try:
         z_df["position"] = z_df["position"].astype(int)
     except ValueError as e:
@@ -81,138 +151,29 @@ def read_z_file(z_file_path: str) -> pd.DataFrame:
     if not np.all(positions[:-1] <= positions[1:]):
         raise ValueError("Positions in .z file are not sorted. Please sort by position.")
 
-    # Check for duplicate variants (same position AND same alleles)
-    duplicate_variants = z_df[
-        z_df.duplicated(subset=["position", "allele1", "allele2"], keep=False)
-    ]
-    if len(duplicate_variants) > 0:
+    # Check for and report duplicates
+    _check_duplicates(z_df, positions)
+
+
+def _check_duplicates(z_df: pd.DataFrame, positions: np.ndarray) -> None:
+    """Check for and log duplicate variants."""
+    # Check for exact duplicate variants (same position AND same alleles)
+    exact_duplicates = z_df.duplicated(subset=["position", "allele1", "allele2"], keep=False)
+    n_exact_duplicates = exact_duplicates.sum()
+    
+    if n_exact_duplicates > 0:
         logger.warning(
-            f"Found {len(duplicate_variants)} variants with duplicate position+allele combinations in .z file"
+            f"Found {n_exact_duplicates} variants with duplicate position+allele combinations"
         )
 
-    # Log info about duplicate positions with different alleles (which is allowed)
-    duplicate_positions = z_df[z_df.duplicated(subset=["position"], keep=False)]
-    if len(duplicate_positions) > 0:
-        unique_pos_count = len(np.unique(positions))
+    # Log info about duplicate positions with different alleles (allowed)
+    position_duplicates = z_df.duplicated(subset=["position"], keep=False)
+    n_position_duplicates = position_duplicates.sum()
+    
+    if n_position_duplicates > 0:
+        n_unique_positions = len(np.unique(positions))
+        n_duplicate_positions = len(positions) - n_unique_positions
         logger.info(
-            f"Found {len(duplicate_positions)} variants at {len(positions) - unique_pos_count} duplicate positions (allowed if alleles differ)"
+            f"Found {n_position_duplicates} variants at {n_duplicate_positions} "
+            "duplicate positions (allowed if alleles differ)"
         )
-
-    logger.info(f"Loaded {len(z_df)} variants from chromosome {chromosome}")
-    logger.info(f"Position range: {positions.min()} - {positions.max()}")
-
-    return z_df
-
-
-def create_variant_filter_from_z(z_df: pd.DataFrame) -> Dict[str, Any]:
-    """
-    Create a variant filter dictionary from a .z file DataFrame.
-
-    Parameters:
-    -----------
-    z_df : pandas.DataFrame
-        DataFrame from read_z_file()
-
-    Returns:
-    --------
-    dict
-        Filter dictionary with keys:
-        - chromosome: str, chromosome name (exact format from z file)
-        - positions: list, list of positions to extract
-        - rsids: list, list of rsids in the same order as positions
-        - allele1: list, list of first alleles
-        - allele2: list, list of second alleles
-        - z_file_order: list, indices for sorting variants to match .z file order
-    """
-    return {
-        "chromosome": z_df["chromosome"].iloc[0],
-        "positions": z_df["position"].tolist(),
-        "rsids": z_df["rsid"].tolist(),
-        "allele1": z_df["allele1"].tolist(),
-        "allele2": z_df["allele2"].tolist(),
-        "z_file_order": list(range(len(z_df))),  # Original order from .z file
-    }
-
-
-def validate_variants_match_z_file(
-    variant_info: pd.DataFrame, z_filter: Dict[str, Any]
-) -> Tuple[List[int], List[int]]:
-    """
-    Validate that loaded variants match the .z file and return mapping indices.
-
-    Parameters:
-    -----------
-    variant_info : pandas.DataFrame
-        Variant information from BGEN file
-    z_filter : dict
-        Filter dictionary from create_variant_filter_from_z()
-
-    Returns:
-    --------
-    tuple
-        (bgen_indices, z_indices) - mapping between BGEN variants and .z file order
-
-    Raises:
-    -------
-    ValueError
-        If variants don't match between BGEN and .z file
-    """
-    # Find variants in BGEN that match .z file
-    bgen_indices = []
-    z_indices = []
-
-    # Create lookup dictionaries for efficient matching by position+alleles
-    z_variant_lookup = {}
-    for idx, (pos, a1, a2, rsid) in enumerate(
-        zip(z_filter["positions"], z_filter["allele1"], z_filter["allele2"], z_filter["rsids"])
-    ):
-        # Create key with position and sorted alleles (to handle ref/alt order differences)
-        alleles_sorted = tuple(sorted([a1, a2]))
-        key = (pos, alleles_sorted)
-        if key not in z_variant_lookup:
-            z_variant_lookup[key] = []
-        z_variant_lookup[key].append(idx)
-
-    # Also create rsid lookup as fallback
-    z_rsid_to_idx = {}
-    for idx, rsid in enumerate(z_filter["rsids"]):
-        if rsid not in z_rsid_to_idx:
-            z_rsid_to_idx[rsid] = []
-        z_rsid_to_idx[rsid].append(idx)
-
-    matched_z_indices = set()
-
-    for bgen_idx, row in variant_info.iterrows():
-        # Try to match by position + alleles first (most reliable)
-        bgen_alleles_sorted = tuple(sorted([row["ref"], row["alt"]]))
-        key = (row["pos"], bgen_alleles_sorted)
-
-        if key in z_variant_lookup:
-            # Find the first unmatched z_index for this variant
-            for z_idx in z_variant_lookup[key]:
-                if z_idx not in matched_z_indices:
-                    bgen_indices.append(bgen_idx)
-                    z_indices.append(z_idx)
-                    matched_z_indices.add(z_idx)
-                    break
-        # Fallback: match by rsid
-        elif row["id"] in z_rsid_to_idx:
-            for z_idx in z_rsid_to_idx[row["id"]]:
-                if z_idx not in matched_z_indices:
-                    bgen_indices.append(bgen_idx)
-                    z_indices.append(z_idx)
-                    matched_z_indices.add(z_idx)
-                    break
-
-    # Check that we found variants from .z file
-    total_z_variants = len(z_filter["positions"])
-    if len(matched_z_indices) < total_z_variants:
-        missing_count = total_z_variants - len(matched_z_indices)
-        logger.warning(f"Could not find {missing_count} variants from .z file in BGEN")
-
-    if len(bgen_indices) == 0:
-        raise ValueError("No variants from .z file found in BGEN file")
-
-    logger.info(f"Matched {len(bgen_indices)} out of {total_z_variants} variants from .z file")
-
-    return bgen_indices, z_indices

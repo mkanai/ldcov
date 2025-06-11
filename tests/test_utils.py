@@ -17,10 +17,7 @@ import pandas as pd
 from pathlib import Path
 
 from ldcov.utils.region_utils import parse_region
-from ldcov.utils.variant_filter import (
-    read_z_file,
-    create_variant_filter_from_z,
-)
+from ldcov.utils.variant_filter import load_variant_filter
 from ldcov.utils.categorical_utils import one_hot_encode_categorical
 from ldcov.io.bgen_reader import load_bgen
 
@@ -105,8 +102,8 @@ class TestUtils(unittest.TestCase):
 
     # ==================== Z-file Tests ====================
 
-    def test_read_z_file(self):
-        """Test reading Z-file."""
+    def test_load_z_file_basic(self):
+        """Test basic Z-file loading."""
         # Create test Z-file with correct column names
         z_data = pd.DataFrame(
             {
@@ -120,12 +117,14 @@ class TestUtils(unittest.TestCase):
         z_file = os.path.join(self.temp_dir, "test.z")
         z_data.to_csv(z_file, sep="\t", index=False)
 
-        # Read Z-file
-        df = read_z_file(z_file)
+        # Load Z-file
+        variant_filter = load_variant_filter(z_file)
 
-        self.assertEqual(len(df), 2)
-        self.assertIn("rsid", df.columns)
-        self.assertEqual(df.iloc[0]["rsid"], "rs1")
+        # Check filter structure
+        self.assertIsInstance(variant_filter, dict)
+        self.assertEqual(len(variant_filter["rsids"]), 2)
+        self.assertEqual(variant_filter["rsids"][0], "rs1")
+        self.assertEqual(variant_filter["chromosome"], "1")
 
     def test_z_file_original_chromosome_format(self):
         """Test that Z-files preserve original chromosome format."""
@@ -142,8 +141,8 @@ class TestUtils(unittest.TestCase):
         z_file1 = os.path.join(self.temp_dir, "test_chr1.z")
         z_data1.to_csv(z_file1, sep="\t", index=False)
 
-        z_df1 = read_z_file(z_file1)
-        self.assertEqual(z_df1["chromosome"].iloc[0], "chr1")  # Keeps original format
+        variant_filter1 = load_variant_filter(z_file1)
+        self.assertEqual(variant_filter1["chromosome"], "chr1")  # Keeps original format
 
         # Test 01 format
         z_data2 = pd.DataFrame(
@@ -158,11 +157,11 @@ class TestUtils(unittest.TestCase):
         z_file2 = os.path.join(self.temp_dir, "test_01.z")
         z_data2.to_csv(z_file2, sep="\t", index=False)
 
-        z_df2 = read_z_file(z_file2)
-        self.assertEqual(z_df2["chromosome"].iloc[0], "01")  # Keeps original format
+        variant_filter2 = load_variant_filter(z_file2)
+        self.assertEqual(variant_filter2["chromosome"], "01")  # Keeps original format
 
-    def test_create_variant_filter_from_z(self):
-        """Test creating variant filter from Z-file."""
+    def test_load_variant_filter(self):
+        """Test loading variant filter from Z-file."""
         # Load actual variant info
         _, variant_info, _ = load_bgen(
             file_path=str(self.bgen_file),
@@ -183,9 +182,8 @@ class TestUtils(unittest.TestCase):
         z_file = os.path.join(self.temp_dir, "test_filter.z")
         z_data.to_csv(z_file, sep="\t", index=False)
 
-        # Create filter
-        z_df = read_z_file(z_file)
-        variant_filter = create_variant_filter_from_z(z_df)
+        # Load filter in one step
+        variant_filter = load_variant_filter(z_file)
 
         # Check that filter is a dictionary with expected keys
         self.assertIsInstance(variant_filter, dict)
@@ -213,7 +211,7 @@ class TestUtils(unittest.TestCase):
 
         # Should raise error for unsorted positions
         with self.assertRaises(ValueError) as cm:
-            read_z_file(z_file)
+            load_variant_filter(z_file)
         self.assertIn("not sorted", str(cm.exception))
 
     # ==================== Categorical Utils Tests ====================

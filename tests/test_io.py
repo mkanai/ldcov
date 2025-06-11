@@ -218,14 +218,13 @@ class TestIO(unittest.TestCase):
         z_file = os.path.join(self.temp_dir, "test.z")
         z_data.to_csv(z_file, sep='\t', index=False)
         
-        # Import the functions we need
-        from ldcov.utils.variant_filter import read_z_file, create_variant_filter_from_z
+        # Import the function we need
+        from ldcov.utils.variant_filter import load_variant_filter
         
         reader = BgenFileReader(str(self.bgen_file))
         
         # Create filter from z file
-        z_df = read_z_file(z_file)
-        variant_filter = create_variant_filter_from_z(z_df)
+        variant_filter = load_variant_filter(z_file)
         
         # Load filtered variants
         dosages, variant_info = reader.load_filtered_variants(variant_filter)
