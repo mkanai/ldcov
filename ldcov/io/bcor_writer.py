@@ -128,7 +128,7 @@ class BcorWriter:
         if variant_info is None:
             variant_info = pd.DataFrame(
                 {
-                    "id": [f"variant_{i}" for i in range(n_snps)],
+                    "rsid": [f"variant_{i}" for i in range(n_snps)],
                     "pos": np.arange(1, n_snps + 1, dtype=np.int32),
                     "chrom": ["1"] * n_snps,
                     "ref": ["A"] * n_snps,
@@ -176,7 +176,7 @@ class BcorWriter:
         # Pre-encode strings
         encoded_data = []
         for idx, row in variant_info.iterrows():
-            rsid = str(row.get("id", f"variant_{idx}")).encode("utf-8")
+            rsid = str(row.get("rsid", f"variant_{idx}")).encode("utf-8")
             chromosome = str(row.get("chrom", "1")).encode("utf-8")
             allele1 = str(row.get("ref", "A")).encode("utf-8")
             allele2 = str(row.get("alt", "T")).encode("utf-8")

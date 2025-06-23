@@ -66,8 +66,8 @@ def save_correlation_matrix(
 
     # Extract variant IDs if available (for index file)
     variant_ids = None
-    if variant_info is not None and "id" in variant_info.columns:
-        variant_ids = variant_info["id"].tolist()
+    if variant_info is not None and "rsid" in variant_info.columns:
+        variant_ids = variant_info["rsid"].tolist()
 
     # Save matrix in appropriate format
     if output_format == "matrix":
@@ -105,7 +105,7 @@ def save_correlation_matrix(
                 # Pre-extract variant info arrays for faster access
                 chroms = variant_info["chrom"].values
                 positions = variant_info["pos"].values
-                ids = variant_info["id"].values
+                ids = variant_info["rsid"].values
                 refs = variant_info["ref"].values
                 alts = variant_info["alt"].values
 
@@ -176,7 +176,7 @@ def load_correlation_matrix(
         # Convert metadata to standard format
         variant_info = pd.DataFrame(
             {
-                "id": meta["rsid"],
+                "rsid": meta["rsid"],
                 "chrom": meta["chromosome"],
                 "pos": meta["position"],
                 "ref": meta["allele1"],
@@ -232,7 +232,7 @@ def load_correlation_matrix(
             variant_info = (
                 pd.concat([variant_a, variant_b]).drop_duplicates().reset_index(drop=True)
             )
-            variant_info.columns = ["chrom", "pos", "id", "ref", "alt"]
+            variant_info.columns = ["chrom", "pos", "rsid", "ref", "alt"]
         else:
             variant_info = None
 
@@ -244,12 +244,12 @@ def load_correlation_matrix(
                 idx1 = variant_info[
                     (variant_info["chrom"] == row["CHROM"])
                     & (variant_info["pos"] == row["POS"])
-                    & (variant_info["id"] == row["ID"])
+                    & (variant_info["rsid"] == row["ID"])
                 ].index[0]
                 idx2 = variant_info[
                     (variant_info["chrom"] == row["CHROM_B"])
                     & (variant_info["pos"] == row["POS_B"])
-                    & (variant_info["id"] == row["ID_B"])
+                    & (variant_info["rsid"] == row["ID_B"])
                 ].index[0]
                 corr_matrix[idx1, idx2] = row["R"]
                 corr_matrix[idx2, idx1] = row["R"]  # Symmetrical
@@ -284,7 +284,7 @@ def load_correlation_matrix(
             if len(variant_ids) == corr_matrix.shape[0]:
                 variant_info = pd.DataFrame(
                     {
-                        "id": variant_ids,
+                        "rsid": variant_ids,
                         "chrom": [""] * len(variant_ids),  # Placeholder
                         "pos": [0] * len(variant_ids),  # Placeholder
                         "ref": [""] * len(variant_ids),  # Placeholder
