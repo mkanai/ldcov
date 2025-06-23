@@ -17,16 +17,22 @@ jobs:
     - uses: actions/checkout@v3
       with:
         fetch-depth: 0  # Required for setuptools_scm
+        submodules: recursive  # Fetch vendored libraries
     
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
     
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential
+    
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install build pytest pytest-cov flake8 black
+        pip install build pytest pytest-cov flake8 black cmake
         # Install the package with all dependencies
         pip install -e .[dev]
     
@@ -59,16 +65,22 @@ jobs:
     - uses: actions/checkout@v3
       with:
         fetch-depth: 0  # Required for setuptools_scm
+        submodules: recursive  # Fetch vendored libraries
     
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
     
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential
+    
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install build twine
+        pip install build twine cmake numpy cython
     
     - name: Build package
       run: |
