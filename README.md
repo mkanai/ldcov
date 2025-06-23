@@ -4,17 +4,25 @@ A Python package for efficient linkage disequilibrium (LD) calculation with cova
 
 ## Key Features
 
-- **BGEN format support**: Efficient reading and writing of BGEN v1.2/v1.3 files
+- **BGEN format support**: Efficient reading of BGEN v1.1/v1.2 files with mandatory BGI index
 - **Covariate adjustment**: Remove confounding effects using Frisch-Waugh-Lovell (FWL) projection
 - **Pre-computed projection matrices**: Compute QR decomposition once, reuse across multiple analyses
-- **Flexible computation modes**: Compute LD only, save adjusted genotypes only, or both
+- **Flexible LD computation**: With or without covariate adjustment
 - **Z-file support**: Filter and order variants based on external variant lists
-- **Correlation-preserving transformation**: Save adjusted genotypes while maintaining LD structure
 - **Region filtering**: Process specific genomic regions
-- **Cloud storage for covariates**: Load covariate files directly from Google Cloud Storage (gs://)
+- **Cloud storage support**: Load BGEN files and covariates directly from Google Cloud Storage (gs://)
 - **Optimized for large datasets**: Efficient memory usage and computation
+- **GCS BGEN reading**: Stream BGEN files from Google Cloud Storage without downloading
 
 ## Installation
+
+### Requirements
+
+- Python ≥ 3.8
+- CMake ≥ 3.12 (for building compression libraries)
+- C++ compiler (for building Cython extensions)
+
+### Standard Installation
 
 ```bash
 # Install from GitHub (recommended)
@@ -23,26 +31,84 @@ pip install git+https://github.com/mkanai/ldcov.git
 # For development
 git clone https://github.com/mkanai/ldcov.git
 cd ldcov
+git submodule update --init --recursive  # Get compression libraries
 pip install -e .
 ```
 
-**Note**: ldcov uses a custom fork of the bgen library with memory initialization fixes. This will be automatically installed when you install ldcov.
+### Compression Libraries
+
+ldcov uses high-performance compression libraries for BGEN file reading:
+- **zlib-ng**: An optimized zlib replacement (10-30% faster)
+- **zstd**: Fast compression library
+
+By default, ldcov builds these libraries from source for optimal performance and consistency. If the build fails, installation will stop with an error message.
+
+#### Using System Libraries (Not Recommended)
+
+If you cannot build the vendored libraries, you can use system libraries:
+
+```bash
+# Use system zlib and zstd libraries
+LDCOV_USE_SYSTEM_LIBS=1 pip install git+https://github.com/mkanai/ldcov.git
+```
+
+**Warning**: Using system libraries may result in:
+- Different behavior between systems
+- Slower performance (standard zlib vs optimized zlib-ng)
+- Potential version incompatibilities
+
+#### Verifying Compression Backend
+
+You can check which compression backend is being used:
+
+```python
+from ldcov.io.bgen._bgen import get_compression_backend
+print(get_compression_backend())
+# {'type': 'vendored', 'zlib': 'zlib-ng 2.2.4 (zlib-compatible, optimized)', ...}
+```
+
+**Note**: ldcov includes a custom Cython-based BGEN reader optimized for performance. All BGEN files must have accompanying BGI index files (create with `bgenix -g file.bgen`).
 
 ## Usage
+
+### Cloud Storage (GCS) Support
+
+ldcov can read BGEN files directly from Google Cloud Storage without downloading:
+
+```bash
+# Read BGEN from GCS
+ldcov --bgen gs://bucket/data.bgen --compute-ld --out results
+
+# With covariate adjustment (covariates can also be on GCS)
+ldcov --bgen gs://bucket/data.bgen -c gs://bucket/covariates.txt --compute-ld --out results
+
+# BGI index files are automatically downloaded to current directory
+```
+
+**Requirements**:
+- Install gcsfs: `pip install gcsfs` (included in dependencies)
+- BGI index files (`.bgen.bgi`) must exist alongside BGEN files on GCS
+- Appropriate GCS credentials configured (via gcloud, service account, etc.)
+
+**How it works**:
+- BGEN files are streamed from GCS using efficient range requests
+- BGI index files are downloaded to current directory (like bcftools)
+- Smart buffering minimizes API calls and latency
+- Compatible with all existing ldcov features
 
 ### Command-Line Interface
 
 The CLI uses flexible flags to control what operations to perform:
 
 ```bash
-# Compute LD only (no adjusted genotypes saved)
+# Compute LD only (no covariate adjustment)
 ldcov --bgen input.bgen --out output --compute-ld
 
-# Compute LD and save adjusted genotypes
-ldcov --bgen input.bgen --out output --compute-ld --export-adjusted-bgen -c covariates.txt
+# Compute LD with covariate adjustment
+ldcov --bgen input.bgen --out output --compute-ld -c covariates.txt
 
-# Only save adjusted genotypes (no LD computation)
-ldcov --bgen input.bgen --out output --export-adjusted-bgen -c covariates.txt
+# Use specific columns as covariates
+ldcov --bgen input.bgen --out output --compute-ld -c covariates.txt --covariate-cols PC1 PC2 PC3
 
 # With region filtering
 ldcov --bgen input.bgen --out output --compute-ld --region 1:1000000-2000000
@@ -54,7 +120,7 @@ ldcov --bgen input.bgen --out output --compute-ld --z variants.z
 ldcov --bgen input.bgen --bgi input.bgen.bgi --out output --compute-ld
 
 # Use covariate file from Google Cloud Storage
-ldcov --bgen input.bgen --out output --compute-ld --export-adjusted-bgen -c gs://bucket/covariates.txt
+ldcov --bgen input.bgen --out output --compute-ld -c gs://bucket/covariates.txt
 ```
 
 ### Pre-computed Projection Matrices (New!)
@@ -84,7 +150,6 @@ This is particularly useful for:
 Based on the flags used, ldcov will create:
 
 - `--compute-ld`: Creates `{out}.ld` (matrix format) or `{out}.ld.gz` (long format)
-- `--export-adjusted-bgen`: Creates `{out}.adj.bgen` and `{out}.adj.metadata.csv.gz`
 - `--precompute-projection` or `--save-projection`: Creates `{out}.proj.npz`
 
 ### Python API
@@ -107,16 +172,6 @@ ldcov.compute_ld_from_standardized(
     standardized_genotypes=standardized_genotypes,
     variant_info=variant_info,
     output_file="output.ld"
-)
-
-# Save adjusted genotypes to BGEN
-ldcov.save_adjusted_genotypes(
-    standardized_genotypes=standardized_genotypes,
-    variant_info=variant_info,
-    sample_ids=sample_ids,
-    output_file="adjusted.bgen",
-    means=means,
-    norms=norms
 )
 
 # Lower-level functions for custom workflows
@@ -192,22 +247,12 @@ The package uses Frisch-Waugh-Lovell (FWL) projection to remove covariate effect
 
 For efficiency, the QR decomposition can be pre-computed once and reused across multiple analyses, as the projection matrix Q depends only on the covariates, not the genotypes.
 
-### Correlation-Preserving Transformation
-
-When saving adjusted genotypes:
-
-1. Adjusted standardized genotypes are transformed back to allelic scale (0-2 range)
-2. The transformation preserves the correlation structure
-3. Re-standardizing the saved genotypes yields the same LD matrix
-
-See [docs/adjusted_genotypes.md](docs/adjusted_genotypes.md) for mathematical details.
-
 ## Requirements
 
 - Python 3.8+
 - numpy >= 1.19.0
 - pandas >= 1.0.0
-- bgen (custom fork with memory fixes, automatically installed)
+- zstandard >= 0.15.0
 - gcsfs >= 0.7.0
 - tqdm >= 4.50.0
 
