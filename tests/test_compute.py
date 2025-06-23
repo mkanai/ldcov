@@ -17,12 +17,11 @@ from pathlib import Path
 
 from ldcov.compute.correlation import (
     load_and_adjust_genotypes,
-    save_adjusted_genotypes,
     compute_ld_from_standardized,
     compute_correlation_matrix,
 )
 from ldcov.compute.covariate import standardize_genotypes
-from ldcov.io.bgen_reader import load_bgen
+from ldcov.io import load_bgen
 
 
 class TestCompute(unittest.TestCase):
@@ -173,38 +172,6 @@ class TestCompute(unittest.TestCase):
 
         self.assertEqual(len(sample_ids), n_samples)
 
-    def test_save_and_reload_adjusted_genotypes(self):
-        """Test saving adjusted genotypes and reloading."""
-        # Load and adjust
-        std_geno, var_info, sample_ids, means, norms = load_and_adjust_genotypes(
-            genotype_file=str(self.bgen_file),
-            covariate_file=self.cov_file,
-            index_file=str(self.bgi_file),
-            sample_file=str(self.sample_file),
-        )
-
-        # Save adjusted genotypes
-        output_file = os.path.join(self.temp_dir, "adjusted.bgen")
-        save_adjusted_genotypes(std_geno, var_info, sample_ids, output_file, means, norms)
-
-        self.assertTrue(os.path.exists(output_file))
-
-        # Reload and compute LD
-        reload_std_geno, reload_var_info, reload_sample_ids, _, _ = load_and_adjust_genotypes(
-            genotype_file=output_file
-        )
-
-        # LD structure should be preserved
-        original_ld = compute_correlation_matrix(std_geno)
-        reloaded_ld = compute_correlation_matrix(reload_std_geno)
-
-        # Check correlation between LD matrices
-        triu_idx = np.triu_indices_from(original_ld, k=1)
-        orig_flat = original_ld[triu_idx]
-        reload_flat = reloaded_ld[triu_idx]
-        correlation = np.corrcoef(orig_flat, reload_flat)[0, 1]
-
-        self.assertGreater(correlation, 0.99)
 
     def test_sample_filtering_with_missing_covariates(self):
         """Test that samples are filtered when some lack covariate data."""
@@ -264,65 +231,6 @@ class TestCompute(unittest.TestCase):
         self.assertTrue(np.allclose(np.diag(ldcov_ld), 1.0), "LD matrix diagonal should be 1.0")
         self.assertTrue(np.allclose(ldcov_ld, ldcov_ld.T), "LD matrix should be symmetric")
 
-    def test_detailed_correlation_preservation(self):
-        """Test correlation preservation with specific thresholds during save/reload."""
-        # Create covariates
-        n_samples = len(self.sample_ids)
-        np.random.seed(42)  # For reproducibility
-        covariates = pd.DataFrame(
-            {
-                "IID": self.sample_ids,
-                "PC1": np.random.normal(0, 1, n_samples),
-                "PC2": np.random.normal(0, 1, n_samples),
-            }
-        )
-        cov_file = os.path.join(self.temp_dir, "test_correlation_preservation.csv")
-        covariates.to_csv(cov_file, index=False)
-
-        # Load and adjust with covariates
-        std_geno, var_info, sample_ids, means, norms = load_and_adjust_genotypes(
-            genotype_file=str(self.bgen_file),
-            covariate_file=cov_file,
-            index_file=str(self.bgi_file),
-            sample_file=str(self.sample_file),
-        )
-
-        # Compute original LD
-        original_ld = compute_correlation_matrix(std_geno)
-
-        # Save adjusted genotypes
-        adjusted_bgen = os.path.join(self.temp_dir, "correlation_preservation.bgen")
-        save_adjusted_genotypes(std_geno, var_info, sample_ids, adjusted_bgen, means, norms)
-
-        # Reload adjusted genotypes (without covariates)
-        reload_std_geno, reload_var_info, reload_sample_ids, _, _ = load_and_adjust_genotypes(
-            genotype_file=adjusted_bgen
-        )
-
-        # Compute LD from reloaded data
-        reloaded_ld = compute_correlation_matrix(reload_std_geno)
-
-        # Detailed correlation preservation validation
-        self.assertEqual(original_ld.shape, reloaded_ld.shape, "LD matrices have different shapes")
-
-        # Flatten upper triangular parts for comparison
-        triu_indices = np.triu_indices_from(original_ld, k=1)
-        original_flat = original_ld[triu_indices]
-        reloaded_flat = reloaded_ld[triu_indices]
-
-        # Calculate correlation between LD matrices
-        ld_correlation = np.corrcoef(original_flat, reloaded_flat)[0, 1]
-
-        # Should be very highly correlated (>0.99 threshold)
-        self.assertGreater(
-            ld_correlation,
-            0.99,
-            f"LD matrices not highly correlated (correlation: {ld_correlation:.6f})",
-        )
-
-        # Mean absolute difference should be small (<0.1 threshold)
-        mean_diff = np.mean(np.abs(original_ld - reloaded_ld))
-        self.assertLess(mean_diff, 0.1, f"Mean LD difference too large: {mean_diff:.6f}")
 
     def test_end_to_end_workflow_validation(self):
         """Test complete modular workflow with intermediate validations."""
@@ -340,7 +248,6 @@ class TestCompute(unittest.TestCase):
 
         # Define output files
         output_ld = os.path.join(self.temp_dir, "workflow_ld.txt")
-        adjusted_bgen = os.path.join(self.temp_dir, "workflow_adjusted.bgen")
 
         # Step 1: Load and adjust genotypes
         std_geno, var_info, sample_ids, means, norms = load_and_adjust_genotypes(
@@ -359,21 +266,7 @@ class TestCompute(unittest.TestCase):
         self.assertIsInstance(means, np.ndarray)
         self.assertIsInstance(norms, np.ndarray)
 
-        # Step 2: Save adjusted genotypes
-        save_adjusted_genotypes(std_geno, var_info, sample_ids, adjusted_bgen, means, norms)
-
-        # Validate outputs exist
-        self.assertTrue(os.path.exists(adjusted_bgen))
-        metadata_file = f"{os.path.splitext(adjusted_bgen)[0]}.metadata.tsv.gz"
-        self.assertTrue(os.path.exists(metadata_file))
-
-        # Validate metadata content
-        metadata_df = pd.read_csv(metadata_file, sep="\t")
-        self.assertIn("mean", metadata_df.columns)
-        self.assertIn("norm", metadata_df.columns)
-        self.assertEqual(len(metadata_df), len(var_info))
-
-        # Step 3: Compute LD
+        # Step 2: Compute LD
         compute_ld_from_standardized(std_geno, var_info, output_ld, output_format="matrix")
 
         # Validate LD output

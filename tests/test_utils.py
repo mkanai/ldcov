@@ -19,7 +19,7 @@ from pathlib import Path
 from ldcov.utils.region_utils import parse_region
 from ldcov.utils.variant_filter import load_variant_filter
 from ldcov.utils.categorical_utils import one_hot_encode_categorical
-from ldcov.io.bgen_reader import load_bgen
+from ldcov.io import load_bgen
 
 
 class TestUtils(unittest.TestCase):
@@ -172,7 +172,7 @@ class TestUtils(unittest.TestCase):
         subset_variants = variant_info.iloc[:2]
         z_data = pd.DataFrame(
             {
-                "rsid": subset_variants["id"].tolist(),
+                "rsid": subset_variants["rsid"].tolist(),
                 "chromosome": subset_variants["chrom"].tolist(),
                 "position": subset_variants["pos"].astype(str).tolist(),
                 "allele1": subset_variants["ref"].tolist(),

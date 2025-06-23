@@ -19,7 +19,7 @@ from pathlib import Path
 from ldcov.compute.covariate import standardize_genotypes, regress_out_covariates
 from ldcov.io.covariate_loader import load_covariates
 from ldcov.utils.categorical_utils import one_hot_encode_categorical
-from ldcov.io.bgen_reader import load_bgen
+from ldcov.io import load_bgen
 
 
 class TestCovariate(unittest.TestCase):
