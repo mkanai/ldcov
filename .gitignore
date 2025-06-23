@@ -86,3 +86,27 @@ temp/
 # Local configuration
 .env
 .envrc
+
+# Cython build artifacts
+# Ignore ONLY Cython-generated C/C++ files (those with corresponding .pyx files)
+# Hand-written C++ files in subdirectories are tracked by git
+ldcov/io/bgen/_bgen.cpp
+ldcov/io/bgen/_decompressor.cpp
+ldcov/io/bgen/header.cpp
+ldcov/io/bgen/reader.cpp
+ldcov/io/bgen/variant.cpp
+ldcov/io/bgen/_reader_v2.cpp
+ldcov/**/*.c
+*.so
+*.html
+build/
+*.egg-info/
+
+# Auto-generated build configuration
+ldcov/io/bgen/_build_config.py
+
+# Reference files (not for commit)
+reference_only/
+
+# Benchmark test data (large BGEN files)
+benchmarks/test_data/

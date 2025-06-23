@@ -4,5 +4,14 @@ include pyproject.toml
 include MANIFEST.in
 include Makefile
 
+recursive-include ldcov *.pyx *.pxd *.pxi
 recursive-include examples *.py
 recursive-include tests *.py
+recursive-include tests/data *
+
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.so
+global-exclude *.c
+global-exclude *.cpp
+global-exclude *.html
