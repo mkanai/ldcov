@@ -40,7 +40,13 @@ def build_zlib_ng():
     zlib_build_dir = BUILD_DIR / "zlib-ng"
     
     if not zlib_dir.exists():
-        raise RuntimeError(f"zlib-ng submodule not found at {zlib_dir}")
+        raise RuntimeError(
+            f"zlib-ng submodule not found at {zlib_dir}\n\n"
+            "The vendored compression libraries are missing. Please run:\n"
+            "  git submodule update --init --recursive\n\n"
+            "Or clone with submodules:\n"
+            "  git clone --recursive https://github.com/mkanai/ldcov.git\n"
+        )
     
     # Create build directory
     zlib_build_dir.mkdir(parents=True, exist_ok=True)
@@ -48,8 +54,8 @@ def build_zlib_ng():
     # Configure with CMake (use absolute paths)
     cmake_args = [
         "cmake",
-        f"-S{zlib_dir.absolute()}",
-        f"-B{zlib_build_dir.absolute()}",
+        "-S", str(zlib_dir.absolute()),
+        "-B", str(zlib_build_dir.absolute()),
         "-DCMAKE_BUILD_TYPE=Release",
         "-DZLIB_COMPAT=ON",  # Enable zlib compatibility mode
         "-DBUILD_SHARED_LIBS=OFF",  # Build static library
@@ -64,7 +70,16 @@ def build_zlib_ng():
             "-DCMAKE_OSX_DEPLOYMENT_TARGET=10.9",
         ])
     
-    subprocess.check_call(cmake_args)
+    try:
+        subprocess.check_call(cmake_args)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f"CMake configuration failed with error: {e}\n\n"
+            "Please ensure CMake is installed:\n"
+            "  Ubuntu/Debian: sudo apt-get install cmake\n"
+            "  macOS: brew install cmake\n"
+            "  pip: pip install cmake\n"
+        )
     
     # Build
     subprocess.check_call(["cmake", "--build", str(zlib_build_dir), "--config", "Release"])
@@ -88,7 +103,13 @@ def build_zstd():
     zstd_build_dir = BUILD_DIR / "zstd"
     
     if not zstd_dir.exists():
-        raise RuntimeError(f"zstd submodule not found at {zstd_dir}")
+        raise RuntimeError(
+            f"zstd submodule not found at {zstd_dir}\n\n"
+            "The vendored compression libraries are missing. Please run:\n"
+            "  git submodule update --init --recursive\n\n"
+            "Or clone with submodules:\n"
+            "  git clone --recursive https://github.com/mkanai/ldcov.git\n"
+        )
     
     # Create build directory
     zstd_build_dir.mkdir(parents=True, exist_ok=True)
@@ -98,14 +119,23 @@ def build_zstd():
         # On Windows, use CMake
         cmake_args = [
             "cmake",
-            f"-S{zstd_dir}/build/cmake",
-            f"-B{zstd_build_dir}",
+            "-S", str(zstd_dir / "build" / "cmake"),
+            "-B", str(zstd_build_dir),
             "-DCMAKE_BUILD_TYPE=Release",
             "-DZSTD_BUILD_PROGRAMS=OFF",
             "-DZSTD_BUILD_SHARED=OFF",
             "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",  # Enable -fPIC for static libs
         ]
-        subprocess.check_call(cmake_args)
+        try:
+            subprocess.check_call(cmake_args)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"CMake configuration failed with error: {e}\n\n"
+                "Please ensure CMake is installed:\n"
+                "  Ubuntu/Debian: sudo apt-get install cmake\n"
+                "  macOS: brew install cmake\n"
+                "  pip: pip install cmake\n"
+            )
         subprocess.check_call(["cmake", "--build", str(zstd_build_dir), "--config", "Release"])
         lib_path = zstd_build_dir / "lib" / "Release" / "zstd_static.lib"
     else:
@@ -202,21 +232,22 @@ class CustomBuildExt(build_ext):
 
 COMPRESSION_BACKEND = "{backend_type}"
 
+
 def get_build_info():
     """Get build-time configuration."""
     if COMPRESSION_BACKEND == "vendored":
         return {{
-            'type': 'vendored',
-            'zlib': 'zlib-ng 2.2.4 (zlib-compatible, optimized)',
-            'zstd': 'zstd 1.5.7',
-            'note': 'Using vendored high-performance compression libraries'
+            "type": "vendored",
+            "zlib": "zlib-ng 2.2.4 (zlib-compatible, optimized)",
+            "zstd": "zstd 1.5.7",
+            "note": "Using vendored high-performance compression libraries",
         }}
     else:
         return {{
-            'type': 'system',
-            'zlib': 'System zlib',
-            'zstd': 'System zstd',
-            'note': 'Using system compression libraries'
+            "type": "system",
+            "zlib": "System zlib",
+            "zstd": "System zstd",
+            "note": "Using system compression libraries",
         }}
 '''
         

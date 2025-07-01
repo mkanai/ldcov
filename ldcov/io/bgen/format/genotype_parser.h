@@ -2,9 +2,10 @@
 #define LDCOV_BGEN_FORMAT_GENOTYPE_PARSER_H
 
 #include <cstdint>
-#include <vector>
-#include <memory>
 #include <cstring>
+#include <memory>
+#include <vector>
+
 #include "bgen_header.h"
 
 namespace ldcov {
@@ -15,26 +16,31 @@ struct GenotypeData {
     uint32_t n_samples;
     uint16_t n_alleles;
     bool phased;
-    std::vector<uint8_t> ploidy;           // Ploidy for each sample
-    std::vector<float> probabilities;      // Genotype probabilities
-    std::vector<bool> missing;             // Missing data flags
+    std::vector<uint8_t> ploidy;       // Ploidy for each sample
+    std::vector<float> probabilities;  // Genotype probabilities
+    std::vector<bool> missing;         // Missing data flags
     uint8_t min_ploidy;
     uint8_t max_ploidy;
     bool constant_ploidy;
-    
-    GenotypeData() : n_samples(0), n_alleles(0), phased(false), 
-                     min_ploidy(0), max_ploidy(0), constant_ploidy(true) {}
-    
+
+    GenotypeData()
+        : n_samples(0),
+          n_alleles(0),
+          phased(false),
+          min_ploidy(0),
+          max_ploidy(0),
+          constant_ploidy(true) {}
+
     // Calculate dosages from probabilities
     void computeDosages(float* output) const;
-    
+
     // Calculate dosages for specific samples only
     void computeDosagesFiltered(const int* sample_indices, int n_indices, float* output) const;
 };
 
 // Genotype parser class
 class GenotypeParser {
-public:
+   public:
     /**
      * Parse genotype data from buffer
      * @param buffer Pointer to genotype data (may be compressed)
@@ -45,15 +51,10 @@ public:
      * @param n_alleles Number of alleles
      * @return Parsed genotype data
      */
-    static std::unique_ptr<GenotypeData> parse(
-        const uint8_t* buffer,
-        size_t size,
-        LayoutType layout,
-        CompressionType compression,
-        uint32_t n_samples,
-        uint16_t n_alleles
-    );
-    
+    static std::unique_ptr<GenotypeData> parse(const uint8_t* buffer, size_t size,
+                                               LayoutType layout, CompressionType compression,
+                                               uint32_t n_samples, uint16_t n_alleles);
+
     /**
      * Parse genotype data from already decompressed buffer
      * @param buffer Pointer to decompressed genotype data
@@ -63,14 +64,10 @@ public:
      * @param n_alleles Number of alleles
      * @return Parsed genotype data
      */
-    static std::unique_ptr<GenotypeData> parseDecompressed(
-        const uint8_t* buffer,
-        size_t size,
-        LayoutType layout,
-        uint32_t n_samples,
-        uint16_t n_alleles
-    );
-    
+    static std::unique_ptr<GenotypeData> parseDecompressed(const uint8_t* buffer, size_t size,
+                                                           LayoutType layout, uint32_t n_samples,
+                                                           uint16_t n_alleles);
+
     /**
      * Compute dosages directly without full parsing (for efficiency)
      * @param buffer Pointer to genotype data
@@ -81,16 +78,10 @@ public:
      * @param n_alleles Number of alleles
      * @param output Pre-allocated array for dosages (size: n_samples)
      */
-    static void computeDosagesDirect(
-        const uint8_t* buffer,
-        size_t size,
-        LayoutType layout,
-        CompressionType compression,
-        uint32_t n_samples,
-        uint16_t n_alleles,
-        float* output
-    );
-    
+    static void computeDosagesDirect(const uint8_t* buffer, size_t size, LayoutType layout,
+                                     CompressionType compression, uint32_t n_samples,
+                                     uint16_t n_alleles, float* output);
+
     /**
      * Compute dosages for specific samples only
      * @param buffer Pointer to genotype data
@@ -103,64 +94,35 @@ public:
      * @param n_indices Number of indices
      * @param output Pre-allocated array for dosages (size: n_indices)
      */
-    static void computeDosagesFiltered(
-        const uint8_t* buffer,
-        size_t size,
-        LayoutType layout,
-        CompressionType compression,
-        uint32_t n_samples,
-        uint16_t n_alleles,
-        const int* sample_indices,
-        int n_indices,
-        float* output
-    );
+    static void computeDosagesFiltered(const uint8_t* buffer, size_t size, LayoutType layout,
+                                       CompressionType compression, uint32_t n_samples,
+                                       uint16_t n_alleles, const int* sample_indices, int n_indices,
+                                       float* output);
 
-private:
+   private:
     // Parse v1.1 format genotypes
-    static std::unique_ptr<GenotypeData> parseV11(
-        const uint8_t* buffer,
-        size_t size,
-        uint32_t n_samples
-    );
-    
+    static std::unique_ptr<GenotypeData> parseV11(const uint8_t* buffer, size_t size,
+                                                  uint32_t n_samples);
+
     // Parse v1.2 format genotypes
-    static std::unique_ptr<GenotypeData> parseV12(
-        const uint8_t* buffer,
-        size_t size,
-        uint32_t n_samples,
-        uint16_t n_alleles
-    );
-    
+    static std::unique_ptr<GenotypeData> parseV12(const uint8_t* buffer, size_t size,
+                                                  uint32_t n_samples, uint16_t n_alleles);
+
     // Direct dosage computation for v1.1
-    static void computeDosagesV11Direct(
-        const uint8_t* buffer,
-        size_t size,
-        uint32_t n_samples,
-        float* output
-    );
-    
+    static void computeDosagesV11Direct(const uint8_t* buffer, size_t size, uint32_t n_samples,
+                                        float* output);
+
     // Direct dosage computation for v1.2
-    static void computeDosagesV12Direct(
-        const uint8_t* buffer,
-        size_t size,
-        uint32_t n_samples,
-        uint16_t n_alleles,
-        float* output
-    );
-    
+    static void computeDosagesV12Direct(const uint8_t* buffer, size_t size, uint32_t n_samples,
+                                        uint16_t n_alleles, float* output);
+
     // Optimized filtered dosage computation for v1.2
-    static void computeDosagesV12Filtered(
-        const uint8_t* buffer,
-        size_t size,
-        uint32_t n_samples,
-        uint16_t n_alleles,
-        const int* sample_indices,
-        int n_indices,
-        float* output
-    );
-    
+    static void computeDosagesV12Filtered(const uint8_t* buffer, size_t size, uint32_t n_samples,
+                                          uint16_t n_alleles, const int* sample_indices,
+                                          int n_indices, float* output);
+
     // Helper to read little-endian integers
-    template<typename T>
+    template <typename T>
     static T readLE(const uint8_t* ptr) {
         T value = 0;
         for (size_t i = 0; i < sizeof(T); ++i) {
@@ -172,7 +134,7 @@ private:
 
 // Batch genotype parser for efficient processing
 class BatchGenotypeParser {
-public:
+   public:
     /**
      * Parse multiple genotype blocks
      * @param buffers Vector of genotype data buffers
@@ -184,14 +146,10 @@ public:
      * @return Vector of parsed genotype data
      */
     static std::vector<std::unique_ptr<GenotypeData>> parseBatch(
-        const std::vector<const uint8_t*>& buffers,
-        const std::vector<size_t>& sizes,
-        LayoutType layout,
-        CompressionType compression,
-        uint32_t n_samples,
-        const std::vector<uint16_t>& n_alleles_list
-    );
-    
+        const std::vector<const uint8_t*>& buffers, const std::vector<size_t>& sizes,
+        LayoutType layout, CompressionType compression, uint32_t n_samples,
+        const std::vector<uint16_t>& n_alleles_list);
+
     /**
      * Compute dosages for multiple variants directly
      * @param buffers Vector of genotype data buffers
@@ -203,19 +161,14 @@ public:
      * @param output Pre-allocated 2D array for dosages (n_samples x n_variants)
      * @param output_stride Stride between variants in output array
      */
-    static void computeDosagesBatch(
-        const std::vector<const uint8_t*>& buffers,
-        const std::vector<size_t>& sizes,
-        LayoutType layout,
-        CompressionType compression,
-        uint32_t n_samples,
-        const std::vector<uint16_t>& n_alleles_list,
-        float* output,
-        size_t output_stride
-    );
+    static void computeDosagesBatch(const std::vector<const uint8_t*>& buffers,
+                                    const std::vector<size_t>& sizes, LayoutType layout,
+                                    CompressionType compression, uint32_t n_samples,
+                                    const std::vector<uint16_t>& n_alleles_list, float* output,
+                                    size_t output_stride);
 };
 
-} // namespace bgen
-} // namespace ldcov
+}  // namespace bgen
+}  // namespace ldcov
 
-#endif // LDCOV_BGEN_FORMAT_GENOTYPE_PARSER_H
+#endif  // LDCOV_BGEN_FORMAT_GENOTYPE_PARSER_H

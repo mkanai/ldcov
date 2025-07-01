@@ -2,16 +2,16 @@
 #define LDCOV_BGEN_FORMAT_BGEN_HEADER_H
 
 #include <cstdint>
+#include <cstring>
+#include <stdexcept>
 #include <string>
 #include <vector>
-#include <stdexcept>
-#include <cstring>
 
 namespace ldcov {
 namespace bgen {
 
 // Utility function to read little-endian values
-template<typename T>
+template <typename T>
 inline T readLE(const uint8_t* buffer) {
     T value;
     std::memcpy(&value, buffer, sizeof(T));
@@ -20,11 +20,7 @@ inline T readLE(const uint8_t* buffer) {
 }
 
 // BGEN file format constants
-enum class CompressionType : uint8_t {
-    None = 0,
-    Zlib = 1,
-    Zstd = 2
-};
+enum class CompressionType : uint8_t { None = 0, Zlib = 1, Zstd = 2 };
 
 enum class LayoutType : uint8_t {
     V11 = 1,  // Version 1.1
@@ -33,24 +29,28 @@ enum class LayoutType : uint8_t {
 
 // Structure to hold BGEN header information
 struct BgenHeader {
-    uint32_t offset;           // Offset to variant data
-    uint32_t nvariants;        // Number of variants
-    uint32_t nsamples;         // Number of samples
-    uint32_t flags;            // Header flags
+    uint32_t offset;     // Offset to variant data
+    uint32_t nvariants;  // Number of variants
+    uint32_t nsamples;   // Number of samples
+    uint32_t flags;      // Header flags
     CompressionType compression;
     LayoutType layout;
     bool has_sample_ids;
-    
+
     // Constructor
-    BgenHeader() : offset(0), nvariants(0), nsamples(0), flags(0),
-                   compression(CompressionType::None), 
-                   layout(LayoutType::V12), 
-                   has_sample_ids(false) {}
+    BgenHeader()
+        : offset(0),
+          nvariants(0),
+          nsamples(0),
+          flags(0),
+          compression(CompressionType::None),
+          layout(LayoutType::V12),
+          has_sample_ids(false) {}
 };
 
 // BGEN header parser class
 class BgenHeaderParser {
-public:
+   public:
     /**
      * Parse BGEN header from buffer
      * @param buffer Pointer to header data
@@ -59,7 +59,7 @@ public:
      * @throws std::runtime_error if parsing fails
      */
     static BgenHeader parse(const uint8_t* buffer, size_t size);
-    
+
     /**
      * Get the size of the header in bytes
      * @param buffer Pointer to start of file
@@ -68,7 +68,7 @@ public:
      * @throws std::runtime_error if buffer is too small
      */
     static size_t getHeaderSize(const uint8_t* buffer, size_t size);
-    
+
     /**
      * Check if the file has valid BGEN magic number
      * @param buffer Pointer to header data
@@ -76,10 +76,10 @@ public:
      * @return true if valid BGEN file
      */
     static bool isValidBgen(const uint8_t* buffer, size_t size);
-    
-private:
+
+   private:
     // Helper to read little-endian integers
-    template<typename T>
+    template <typename T>
     static T readLE(const uint8_t* ptr) {
         T value = 0;
         for (size_t i = 0; i < sizeof(T); ++i) {
@@ -93,13 +93,13 @@ private:
 struct SampleBlock {
     std::vector<std::string> sample_ids;
     uint32_t block_size;  // Total size of sample block
-    
+
     SampleBlock() : block_size(0) {}
 };
 
 // Sample block parser class
 class SampleBlockParser {
-public:
+   public:
     /**
      * Parse sample block from buffer
      * @param buffer Pointer to sample block data
@@ -109,7 +109,7 @@ public:
      * @throws std::runtime_error if parsing fails
      */
     static SampleBlock parse(const uint8_t* buffer, size_t size, uint32_t expected_samples);
-    
+
     /**
      * Get the size of the sample block
      * @param buffer Pointer to sample block start
@@ -119,7 +119,7 @@ public:
     static uint32_t getSampleBlockSize(const uint8_t* buffer, size_t size);
 };
 
-} // namespace bgen
-} // namespace ldcov
+}  // namespace bgen
+}  // namespace ldcov
 
-#endif // LDCOV_BGEN_FORMAT_BGEN_HEADER_H
+#endif  // LDCOV_BGEN_FORMAT_BGEN_HEADER_H

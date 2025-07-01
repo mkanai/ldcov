@@ -17,14 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 def handle_nan_values(
-    dosages: np.ndarray,
-    variant_info: pd.DataFrame,
-    sample_ids: List[str],
-    action: str = "error"
+    dosages: np.ndarray, variant_info: pd.DataFrame, sample_ids: List[str], action: str = "error"
 ) -> Tuple[np.ndarray, pd.DataFrame, List[str]]:
     """
     Handle NaN values in genotype matrix based on specified action.
-    
+
     Parameters
     ----------
     dosages : np.ndarray
@@ -35,7 +32,7 @@ def handle_nan_values(
         Sample IDs
     action : str
         Action to take: "error", "mean", "omit", or "warn"
-    
+
     Returns
     -------
     Tuple[np.ndarray, pd.DataFrame, List[str]]
@@ -43,7 +40,7 @@ def handle_nan_values(
     """
     if not np.any(np.isnan(dosages)):
         return dosages, variant_info, sample_ids
-    
+
     if action == "error":
         _report_nan_error(dosages, variant_info, sample_ids)
     elif action == "mean":
@@ -57,9 +54,7 @@ def handle_nan_values(
 
 
 def _impute_nan_with_mean(
-    dosages: np.ndarray, 
-    variant_info: pd.DataFrame,
-    sample_ids: List[str]
+    dosages: np.ndarray, variant_info: pd.DataFrame, sample_ids: List[str]
 ) -> Tuple[np.ndarray, pd.DataFrame, List[str]]:
     """
     Impute NaN values with variant-wise mean.
@@ -115,9 +110,7 @@ def _impute_nan_with_mean(
 
 
 def _omit_nan_samples(
-    dosages: np.ndarray, 
-    variant_info: pd.DataFrame, 
-    sample_ids: List[str]
+    dosages: np.ndarray, variant_info: pd.DataFrame, sample_ids: List[str]
 ) -> Tuple[np.ndarray, pd.DataFrame, List[str]]:
     """
     Omit samples with any NaN values.
@@ -177,9 +170,7 @@ def _omit_nan_samples(
 
 
 def _report_nan_error(
-    dosages: np.ndarray, 
-    variant_info: pd.DataFrame, 
-    sample_ids: List[str]
+    dosages: np.ndarray, variant_info: pd.DataFrame, sample_ids: List[str]
 ) -> None:
     """
     Report detailed error message for NaN values in genotype matrix.
@@ -233,13 +224,11 @@ def _report_nan_error(
 
 
 def _warn_about_nan(
-    dosages: np.ndarray,
-    variant_info: pd.DataFrame,
-    sample_ids: List[str]
+    dosages: np.ndarray, variant_info: pd.DataFrame, sample_ids: List[str]
 ) -> Tuple[np.ndarray, pd.DataFrame, List[str]]:
     """
     Warn about NaN values but return data unchanged.
-    
+
     Parameters
     ----------
     dosages : np.ndarray
@@ -248,30 +237,30 @@ def _warn_about_nan(
         Variant information
     sample_ids : List[str]
         Sample IDs
-        
+
     Returns
     -------
     Tuple[np.ndarray, pd.DataFrame, List[str]]
         Original data unchanged
     """
     nan_mask = np.isnan(dosages)
-    
+
     # Count samples and variants with NaN
     samples_with_nan = np.any(nan_mask, axis=1)
     variants_with_nan = np.any(nan_mask, axis=0)
     n_samples_with_nan = np.sum(samples_with_nan)
     n_variants_with_nan = np.sum(variants_with_nan)
-    
+
     # Find first 5 sample/variant pairs with NaN
     nan_locations = np.argwhere(nan_mask)[:5]
-    
+
     # Build warning message
     warning_msg = (
         f"Genotype matrix contains NaN values:\n"
         f"  - {n_samples_with_nan} out of {dosages.shape[0]} samples have NaN values\n"
         f"  - {n_variants_with_nan} out of {dosages.shape[1]} variants have NaN values"
     )
-    
+
     if len(nan_locations) > 0:
         warning_msg += "\nFirst (up to 5) sample/variant pairs with NaN:\n"
         for i, (sample_idx, variant_idx) in enumerate(nan_locations):
@@ -282,10 +271,12 @@ def _warn_about_nan(
                 f"  {i+1}. Sample '{sample_id}' (index {sample_idx}), "
                 f"Variant '{variant_rsid}' at position {variant_pos} (index {variant_idx})\n"
             )
-    
-    warning_msg += "\nNaN values preserved for analysis. Use 'mean' or 'omit' to handle missing data."
-    
+
+    warning_msg += (
+        "\nNaN values preserved for analysis. Use 'mean' or 'omit' to handle missing data."
+    )
+
     logger.warning(warning_msg)
-    
+
     # Return data unchanged
     return dosages, variant_info, sample_ids

@@ -34,12 +34,22 @@ clean:
 
 # Lint code
 lint:
-	flake8 ldcov tests
-	black --check ldcov tests
+	flake8 ldcov tests --exclude="ldcov/io/bgen/zlib-ng/*,ldcov/io/bgen/zstd/*,*_build_config.py"
+	black --check ldcov tests --exclude="ldcov/io/bgen/zlib-ng/|ldcov/io/bgen/zstd/|_build_config\.py"
 
 # Format code
 format:
-	black ldcov tests
+	black ldcov tests --exclude="ldcov/io/bgen/zlib-ng/|ldcov/io/bgen/zstd/|_build_config\.py"
+	# Format C++ files with clang-format (if available)
+	@if command -v clang-format >/dev/null 2>&1; then \
+		echo "Formatting C++ files..."; \
+		find ldcov/io/bgen -name "*.cpp" -o -name "*.h" -o -name "*.hpp" | \
+		grep -v -E "(zlib-ng|zstd)/" | \
+		xargs -r clang-format -i -style=file; \
+	else \
+		echo "clang-format not found, skipping C++ formatting"; \
+		echo "Install with: sudo apt install clang-format"; \
+	fi
 
 # Run tests
 test:

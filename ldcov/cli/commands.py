@@ -140,7 +140,6 @@ Examples:
         "'omit' - remove samples with NaN values (with warnings)",
     )
 
-
     return parser.parse_args()
 
 

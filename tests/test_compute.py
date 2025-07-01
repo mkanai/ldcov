@@ -172,7 +172,6 @@ class TestCompute(unittest.TestCase):
 
         self.assertEqual(len(sample_ids), n_samples)
 
-
     def test_sample_filtering_with_missing_covariates(self):
         """Test that samples are filtered when some lack covariate data."""
         # Create covariate file with subset of samples
@@ -230,7 +229,6 @@ class TestCompute(unittest.TestCase):
         # Additional checks
         self.assertTrue(np.allclose(np.diag(ldcov_ld), 1.0), "LD matrix diagonal should be 1.0")
         self.assertTrue(np.allclose(ldcov_ld, ldcov_ld.T), "LD matrix should be symmetric")
-
 
     def test_end_to_end_workflow_validation(self):
         """Test complete modular workflow with intermediate validations."""

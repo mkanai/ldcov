@@ -1,9 +1,10 @@
 #ifndef LDCOV_IO_BGEN_IO_MMAP_READER_H
 #define LDCOV_IO_BGEN_IO_MMAP_READER_H
 
-#include "reader_interface.h"
 #include <string>
 #include <vector>
+
+#include "reader_interface.h"
 
 namespace ldcov {
 namespace io {
@@ -11,13 +12,13 @@ namespace bgen {
 
 /**
  * Memory-mapped file reader implementation.
- * 
+ *
  * This class provides efficient file access using memory mapping (mmap),
  * which allows the operating system to map file contents directly into
  * the process's address space for zero-copy access.
  */
 class MMapReader : public FileReader {
-public:
+   public:
     MMapReader();
     ~MMapReader() override;
 
@@ -43,21 +44,23 @@ public:
     bool open(const std::string& filepath);
     std::vector<uint8_t> read_range(uint64_t offset, size_t length);
     const uint8_t* data(size_t offset = 0) const;
-    bool supports_direct_access() const { return true; }
+    bool supports_direct_access() const {
+        return true;
+    }
 
-private:
-    int fd_;                    // File descriptor
-    void* mapped_data_;         // Pointer to memory-mapped data
-    size_t file_size_;          // Size of the file
-    std::string filepath_;      // Path to the currently open file
-    mutable uint64_t position_; // Current read position for FileReader interface
+   private:
+    int fd_;                     // File descriptor
+    void* mapped_data_;          // Pointer to memory-mapped data
+    size_t file_size_;           // Size of the file
+    std::string filepath_;       // Path to the currently open file
+    mutable uint64_t position_;  // Current read position for FileReader interface
 
     // Helper methods
     void cleanup();
 };
 
-} // namespace bgen
-} // namespace io
-} // namespace ldcov
+}  // namespace bgen
+}  // namespace io
+}  // namespace ldcov
 
-#endif // LDCOV_IO_BGEN_IO_MMAP_READER_H
+#endif  // LDCOV_IO_BGEN_IO_MMAP_READER_H

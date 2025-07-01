@@ -352,7 +352,6 @@ class TestCLI(unittest.TestCase):
         with self.assertRaises(SystemExit):
             main()
 
-
     def test_invalid_bgen_file(self):
         """Test error with invalid BGEN file."""
         output_prefix = os.path.join(self.temp_dir, "invalid_bgen")

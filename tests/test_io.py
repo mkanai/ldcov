@@ -185,9 +185,7 @@ class TestIO(unittest.TestCase):
         """Test loading variants from a region."""
         # Load region with variants
         dosages, variant_info, sample_ids = load_bgen(
-            file_path=str(self.bgen_file),
-            index_path=str(self.bgi_file),
-            region="01:1-10"
+            file_path=str(self.bgen_file), index_path=str(self.bgi_file), region="01:1-10"
         )
 
         self.assertGreater(dosages.shape[1], 0)  # Should have some variants
@@ -200,7 +198,7 @@ class TestIO(unittest.TestCase):
             dosages2, variant_info2, sample_ids2 = load_bgen(
                 file_path=str(self.bgen_file),
                 index_path=str(self.bgi_file),
-                region="01:100000-200000"
+                region="01:100000-200000",
             )
         self.assertIn("No variants were loaded", str(context.exception))
 
@@ -229,7 +227,7 @@ class TestIO(unittest.TestCase):
         dosages, variant_info, sample_ids = load_bgen(
             file_path=str(self.bgen_file),
             index_path=str(self.bgi_file),
-            variant_filter=variant_filter
+            variant_filter=variant_filter,
         )
 
         # Should have loaded the variants in z file (or fewer if some don't exist)
@@ -242,9 +240,9 @@ class TestIO(unittest.TestCase):
         _, _, all_sample_ids = load_bgen(
             file_path=str(self.bgen_file),
             index_path=str(self.bgi_file),
-            sample_path=str(self.sample_file)
+            sample_path=str(self.sample_file),
         )
-        
+
         # Get subset of samples
         sample_ids_to_keep = all_sample_ids[:3]  # First 3 samples
 
@@ -253,7 +251,7 @@ class TestIO(unittest.TestCase):
             file_path=str(self.bgen_file),
             index_path=str(self.bgi_file),
             sample_path=str(self.sample_file),
-            sample_ids=sample_ids_to_keep
+            sample_ids=sample_ids_to_keep,
         )
 
         self.assertEqual(dosages.shape[0], 3)  # Only 3 samples
@@ -274,22 +272,22 @@ class TestIO(unittest.TestCase):
     def test_bgen_reader_context_manager(self):
         """Test BgenReader context manager functionality."""
         from ldcov.io.bgen.reader import BgenReader
-        
+
         # Test basic context manager usage
         with BgenReader(str(self.bgen_file)) as reader:
             # Should be able to access properties
             self.assertGreater(len(reader.samples), 0)
             self.assertGreater(reader.nsamples, 0)
             self.assertGreater(reader.nvariants, 0)
-            
+
         # After context exit, accessing should raise error
         with self.assertRaises(ValueError):
             reader.load_variants()
-            
+
     def test_bgen_reader_context_manager_exception(self):
         """Test context manager handles exceptions properly."""
         from ldcov.io.bgen.reader import BgenReader
-        
+
         reader = None
         try:
             with BgenReader(str(self.bgen_file)) as reader:
@@ -297,7 +295,7 @@ class TestIO(unittest.TestCase):
                 raise RuntimeError("Test exception")
         except RuntimeError:
             pass
-            
+
         # Reader should still be closed after exception
         self.assertIsNotNone(reader)
         with self.assertRaises(ValueError):
@@ -836,23 +834,23 @@ class TestIO(unittest.TestCase):
         # Convert to numpy arrays for efficient operations (same as in BgenReader)
         sample_ids_array = np.array(all_sample_ids)
         ids_to_keep_array = np.array(subset_sample_ids)
-        
+
         # Find which requested samples exist in BGEN
         mask = np.isin(sample_ids_array, ids_to_keep_array)
         bgen_indices = np.where(mask)[0]
         found_ids = sample_ids_array[mask]
-        
+
         # Create a mapping to preserve the order of sample_ids_to_keep
         # Use searchsorted for efficient ordering
         sorter = np.argsort(ids_to_keep_array)
         sorted_keep = ids_to_keep_array[sorter]
-        
+
         # Find where each found ID would be inserted in the sorted array
         insert_positions = np.searchsorted(sorted_keep, found_ids)
-        
+
         # Get the original positions in sample_ids_to_keep
         original_positions = sorter[insert_positions]
-        
+
         # Sort by original order
         order = np.argsort(original_positions)
         filtered_ids = found_ids[order].tolist()
@@ -872,28 +870,28 @@ class TestIO(unittest.TestCase):
 
         # Test with some missing samples
         requested_samples = subset_sample_ids + ["MISSING_001", "MISSING_002"]
-        
+
         # Test the functionality directly with our test data
         # Convert to numpy arrays for efficient operations (same as in BgenReader)
         sample_ids_array = np.array(all_sample_ids)
         ids_to_keep_array = np.array(requested_samples)
-        
+
         # Find which requested samples exist in BGEN
         mask = np.isin(sample_ids_array, ids_to_keep_array)
         bgen_indices = np.where(mask)[0]
         found_ids = sample_ids_array[mask]
-        
+
         # Create a mapping to preserve the order of sample_ids_to_keep
         # Use searchsorted for efficient ordering
         sorter = np.argsort(ids_to_keep_array)
         sorted_keep = ids_to_keep_array[sorter]
-        
+
         # Find where each found ID would be inserted in the sorted array
         insert_positions = np.searchsorted(sorted_keep, found_ids)
-        
+
         # Get the original positions in sample_ids_to_keep
         original_positions = sorter[insert_positions]
-        
+
         # Sort by original order
         order = np.argsort(original_positions)
         filtered_ids = found_ids[order].tolist()

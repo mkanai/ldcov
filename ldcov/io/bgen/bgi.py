@@ -143,11 +143,11 @@ class BGIReader:
             raise TypeError(f"start must be int, got {type(start)}")
         if not isinstance(end, (int, np.integer)):
             raise TypeError(f"end must be int, got {type(end)}")
-        
+
         # Convert numpy integers to Python int for SQLite
         start = int(start)
         end = int(end)
-        
+
         query = """
         SELECT chromosome as chrom, position as pos, rsid, number_of_alleles as n_alleles,
                allele1 as ref, allele2 as alt, file_start_position as file_offset,
