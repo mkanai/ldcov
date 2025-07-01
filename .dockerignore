@@ -1,0 +1,20 @@
+# Docker ignore file
+.git
+.github
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+*.so
+*.egg-info
+build/
+dist/
+.coverage
+coverage.xml
+.docker-build-context/
+benchmarks/*.json
+benchmarks/*.log
+benchmarks/test_data/
+tests/data/
+reference_only/
+*.log

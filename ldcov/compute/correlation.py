@@ -15,10 +15,9 @@ import os
 from .covariate import regress_out_covariates, standardize_genotypes
 
 # IO imports
-from ..io.bgen_reader import load_bgen
+from ..io import load_bgen
 from ..io.covariate_loader import load_covariates
 from ..io.correlation_io import save_correlation_matrix
-from ..io.bgen_writer import correlation_preserving_transform, write_bgen, save_metadata
 
 
 logger = logging.getLogger(__name__)
@@ -181,49 +180,6 @@ def load_and_adjust_genotypes(
         )
 
     return standardized_genotypes, variant_info, sample_ids, means, norms
-
-
-def save_adjusted_genotypes(
-    standardized_genotypes: np.ndarray,
-    variant_info: pd.DataFrame,
-    sample_ids: List[str],
-    output_file: str,
-    means: np.ndarray,
-    norms: np.ndarray,
-) -> None:
-    """
-    Save adjusted genotypes to BGEN format.
-
-    Parameters:
-    -----------
-    standardized_genotypes : numpy.ndarray
-        Standardized genotype matrix (samples x variants)
-    variant_info : pandas.DataFrame
-        Variant information
-    sample_ids : list of str
-        Sample identifiers
-    output_file : str
-        Path to output BGEN file
-    means : numpy.ndarray
-        Original means before standardization
-    norms : numpy.ndarray
-        Original norms before standardization
-    """
-    logger.info(
-        "Converting adjusted genotypes to allelic scale using correlation-preserving transformation"
-    )
-    allelic_genotypes = correlation_preserving_transform(standardized_genotypes)
-
-    logger.info(f"Writing adjusted genotypes to BGEN: {output_file}")
-    write_bgen(allelic_genotypes, variant_info, sample_ids, output_file, bit_depth=8)
-
-    # Save metadata
-    metadata_file = f"{os.path.splitext(output_file)[0]}.metadata.tsv.gz"
-    logger.info(f"Saving metadata with standardization parameters to: {metadata_file}")
-    variant_info_with_params = variant_info.copy()
-    variant_info_with_params["mean"] = means
-    variant_info_with_params["norm"] = norms
-    save_metadata(variant_info_with_params, metadata_file)
 
 
 def compute_ld_from_standardized(

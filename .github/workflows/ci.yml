@@ -17,29 +17,43 @@ jobs:
     - uses: actions/checkout@v3
       with:
         fetch-depth: 0  # Required for setuptools_scm
+        submodules: recursive  # Fetch vendored libraries
+    
+    - name: Initialize submodules
+      run: |
+        git submodule update --init --recursive
+        # Verify submodules exist
+        ls -la ldcov/io/bgen/zlib-ng/
+        ls -la ldcov/io/bgen/zstd/
     
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
     
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential
+    
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install build pytest pytest-cov flake8 black
+        pip install build pytest pytest-cov flake8 black cmake
         # Install the package with all dependencies
         pip install -e .[dev]
     
     - name: Lint with flake8
       run: |
         # stop the build if there are Python syntax errors or undefined names
-        flake8 ldcov --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 ldcov --count --select=E9,F63,F7,F82 --show-source --statistics --exclude="ldcov/io/bgen/zlib-ng/*,ldcov/io/bgen/zstd/*"
         # exit-zero treats all errors as warnings
-        flake8 ldcov --count --exit-zero --max-complexity=10 --max-line-length=100 --statistics
+        flake8 ldcov --count --exit-zero --max-complexity=10 --max-line-length=100 --statistics --exclude="ldcov/io/bgen/zlib-ng/*,ldcov/io/bgen/zstd/*"
     
     - name: Check formatting with black
       run: |
-        black --check ldcov
+        black --check ldcov --exclude="ldcov/io/bgen/zlib-ng/|ldcov/io/bgen/zstd/|_build_config\.py"
+    
     
     - name: Test with pytest
       run: |
@@ -59,21 +73,61 @@ jobs:
     - uses: actions/checkout@v3
       with:
         fetch-depth: 0  # Required for setuptools_scm
+        submodules: recursive  # Fetch vendored libraries
+    
+    - name: Initialize submodules
+      run: |
+        git submodule update --init --recursive
+        # Verify submodules exist
+        ls -la ldcov/io/bgen/zlib-ng/
+        ls -la ldcov/io/bgen/zstd/
     
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
     
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential
+    
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install build twine
+        # Install all build dependencies since we're using --no-isolation
+        pip install build twine cmake numpy cython setuptools wheel setuptools_scm
     
     - name: Build package
       run: |
-        python -m build
+        # Build with vendored libraries (the default and recommended approach)
+        # Use --no-isolation to access git submodules
+        python -m build --no-isolation
     
     - name: Check package with twine
       run: |
         twine check dist/*
+    
+    - name: Verify vendored build
+      run: |
+        # Create a temporary directory and test there to avoid source code conflicts
+        TEMP_DIR=$(mktemp -d)
+        cd $TEMP_DIR
+        
+        # Create a clean virtual environment
+        python -m venv test_env
+        source test_env/bin/activate
+        
+        # Install the wheel
+        pip install ${{ github.workspace }}/dist/*.whl
+        
+        # Test imports and verify vendored build
+        python -c "import ldcov; print('✓ ldcov imported successfully')"
+        
+        # Try to verify vendored build (optional - may not work in all environments)
+        python -c "from ldcov.io.bgen._bgen import get_compression_backend; info = get_compression_backend(); print(f'Build info: {info}')" 2>/dev/null || echo "⚠ Build verification not available (this is OK - package still works)"
+        
+        # Cleanup
+        deactivate
+        cd /
+        rm -rf $TEMP_DIR

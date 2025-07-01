@@ -13,7 +13,6 @@ from typing import Optional, List  # noqa: F401
 
 from ..compute.correlation import (
     load_and_adjust_genotypes,
-    save_adjusted_genotypes,
     compute_ld_from_standardized,
 )
 
@@ -37,14 +36,11 @@ def parse_args():
         description="ldcov: Compute linkage disequilibrium with optional covariate adjustment.",
         epilog="""
 Examples:
-  # Compute LD only (no adjusted genotypes saved)
+  # Compute LD only (no covariate adjustment)
   ldcov --bgen input.bgen --out output --compute-ld
 
-  # Compute LD and save adjusted genotypes
-  ldcov --bgen input.bgen --out output --compute-ld --export-adjusted-bgen -c covariates.txt
-
-  # Only adjust genotypes (no LD computation)
-  ldcov --bgen input.bgen --out output --export-adjusted-bgen -c covariates.txt
+  # Compute LD with covariate adjustment
+  ldcov --bgen input.bgen --out output --compute-ld -c covariates.txt
 
   # Use specific columns as covariates
   ldcov --bgen input.bgen --out output --compute-ld -c covariates.txt --covariate-cols PC1 PC2 PC3
@@ -73,12 +69,6 @@ Examples:
     # Mode flags (at least one required)
     parser.add_argument(
         "--compute-ld", action="store_true", help="Compute linkage disequilibrium matrix"
-    )
-
-    parser.add_argument(
-        "--export-adjusted-bgen",
-        action="store_true",
-        help="Export adjusted genotypes to BGEN format",
     )
 
     parser.add_argument(
@@ -168,9 +158,9 @@ def validate_args(args):
         If arguments are invalid for the selected options
     """
     # At least one mode flag must be specified
-    if not args.compute_ld and not args.export_adjusted_bgen and not args.precompute_projection:
+    if not args.compute_ld and not args.precompute_projection:
         raise ValueError(
-            "At least one of --compute-ld, --export-adjusted-bgen, or --precompute-projection must be specified"
+            "At least one of --compute-ld or --precompute-projection must be specified"
         )
 
     # Precompute projection requires covariates
@@ -184,20 +174,13 @@ def validate_args(args):
     if args.covariates and args.projection_matrix:
         raise ValueError("Cannot specify both --covariates and --projection-matrix")
 
-    # Adjusted genotype export requires either covariates or projection matrix
-    if args.export_adjusted_bgen:
-        if not args.covariates and not args.projection_matrix:
-            raise ValueError(
-                "Either --covariates or --projection-matrix is required when using --export-adjusted-bgen"
-            )
-
     # Save projection only makes sense with covariates
     if args.save_projection and not args.covariates:
         raise ValueError("--save-projection requires --covariates")
 
-    # BGEN is required for compute-ld and export-adjusted-bgen
-    if (args.compute_ld or args.export_adjusted_bgen) and not args.bgen:
-        raise ValueError("--bgen is required for --compute-ld and --export-adjusted-bgen")
+    # BGEN is required for compute-ld
+    if args.compute_ld and not args.bgen:
+        raise ValueError("--bgen is required for --compute-ld")
 
 
 def run_cli():
@@ -280,20 +263,6 @@ def run_cli():
         projection_output_file = f"{args.out}.proj.npz"
         save_projection_matrix(projection_data, projection_output_file)
         logger.info(f"Projection matrix saved to {projection_output_file}")
-
-    # Save adjusted genotypes if requested
-    if args.export_adjusted_bgen:
-        adjusted_output_file = f"{args.out}.adj.bgen"
-        logger.info("Saving adjusted genotypes")
-        save_adjusted_genotypes(
-            standardized_genotypes=standardized_genotypes,
-            variant_info=variant_info,
-            sample_ids=sample_ids,
-            output_file=adjusted_output_file,
-            means=means,
-            norms=norms,
-        )
-        logger.info(f"Adjusted genotypes saved to {adjusted_output_file}")
 
     # Compute LD if requested
     if args.compute_ld:

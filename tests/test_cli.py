@@ -18,7 +18,7 @@ import pandas as pd
 import numpy as np
 
 from ldcov.cli.main import main
-from ldcov.io.bgen_reader import load_bgen
+from ldcov.io import load_bgen
 
 
 class TestCLI(unittest.TestCase):
@@ -98,35 +98,9 @@ class TestCLI(unittest.TestCase):
         self.assertTrue(os.path.exists(ld_file))
         self.assertFalse(os.path.exists(f"{output_prefix}.adj.bgen"))
 
-    def test_export_adjusted_only(self):
-        """Test adjusted genotype export only mode."""
-        output_prefix = os.path.join(self.temp_dir, "adj_only")
-
-        sys.argv = [
-            "ldcov",
-            "--bgen",
-            str(self.bgen_file),
-            "--out",
-            output_prefix,
-            "--export-adjusted-bgen",
-            "-c",
-            self.cov_file,
-            "--bgi",
-            str(self.bgi_file),
-        ]
-
-        main()
-
-        # Check outputs
-        adj_file = f"{output_prefix}.adj.bgen"
-        metadata_file = f"{output_prefix}.adj.metadata.tsv.gz"
-        self.assertTrue(os.path.exists(adj_file))
-        self.assertTrue(os.path.exists(metadata_file))
-        self.assertFalse(os.path.exists(f"{output_prefix}.ld"))
-
-    def test_both_modes(self):
-        """Test computing LD and exporting adjusted genotypes."""
-        output_prefix = os.path.join(self.temp_dir, "both_modes")
+    def test_compute_ld_with_covariates(self):
+        """Test computing LD with covariate adjustment."""
+        output_prefix = os.path.join(self.temp_dir, "ld_with_cov")
 
         sys.argv = [
             "ldcov",
@@ -135,19 +109,18 @@ class TestCLI(unittest.TestCase):
             "--out",
             output_prefix,
             "--compute-ld",
-            "--export-adjusted-bgen",
             "-c",
             self.cov_file,
             "--bgi",
             str(self.bgi_file),
+            "--sample",
+            str(self.sample_file),
         ]
 
         main()
 
-        # Check both outputs exist
+        # Check LD output exists
         self.assertTrue(os.path.exists(f"{output_prefix}.ld"))
-        self.assertTrue(os.path.exists(f"{output_prefix}.adj.bgen"))
-        self.assertTrue(os.path.exists(f"{output_prefix}.adj.metadata.tsv.gz"))
 
     # ==================== Auto BGI Detection Tests ====================
 
@@ -215,20 +188,20 @@ class TestCLI(unittest.TestCase):
             "--out",
             output_prefix,
             "--compute-ld",
-            "--export-adjusted-bgen",
             "-c",
             self.custom_cov_file,
             "--covariate-id-col",
             "FID",
             "--bgi",
             str(self.bgi_file),
+            "--sample",
+            str(self.sample_file),
         ]
 
         main()
 
         # Should complete successfully
         self.assertTrue(os.path.exists(f"{output_prefix}.ld"))
-        self.assertTrue(os.path.exists(f"{output_prefix}.adj.bgen"))
 
     def test_missing_covariate_id_column(self):
         """Test error when specified ID column doesn't exist."""
@@ -334,7 +307,7 @@ class TestCLI(unittest.TestCase):
         z_file = os.path.join(self.temp_dir, "test.z")
         z_data = pd.DataFrame(
             {
-                "rsid": subset_variants["id"].tolist(),
+                "rsid": subset_variants["rsid"].tolist(),
                 "chromosome": subset_variants["chrom"].tolist(),
                 "position": subset_variants["pos"].astype(str).tolist(),
                 "allele1": subset_variants["ref"].tolist(),
@@ -374,22 +347,6 @@ class TestCLI(unittest.TestCase):
             str(self.bgen_file),
             "--out",
             output_prefix,
-        ]
-
-        with self.assertRaises(SystemExit):
-            main()
-
-    def test_export_adjusted_without_covariates(self):
-        """Test error when exporting adjusted genotypes without covariates."""
-        output_prefix = os.path.join(self.temp_dir, "no_cov_error")
-
-        sys.argv = [
-            "ldcov",
-            "--bgen",
-            str(self.bgen_file),
-            "--out",
-            output_prefix,
-            "--export-adjusted-bgen",
         ]
 
         with self.assertRaises(SystemExit):
@@ -437,6 +394,8 @@ class TestCLI(unittest.TestCase):
             ws_cov_file,
             "--bgi",
             str(self.bgi_file),
+            "--sample",
+            str(self.sample_file),
         ]
 
         # Should work with whitespace-delimited file
@@ -501,6 +460,8 @@ class TestCLI(unittest.TestCase):
             "PC2",
             "--bgi",
             str(self.bgi_file),
+            "--sample",
+            str(self.sample_file),
         ]
 
         main()
