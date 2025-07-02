@@ -24,10 +24,10 @@ class TestCLI:
         # Store references for use in tests
         self.temp_dir = temp_dir
         self.sample_ids = sample_ids
-        
+
         # Create standard covariate file
         self.cov_file = create_covariate_file()
-        
+
         # Create covariate file with custom ID column
         n_samples = len(sample_ids)
         self.custom_cov_file = create_covariate_file(
@@ -36,7 +36,7 @@ class TestCLI:
             categorical_cols=[],
             custom_sample_ids=sample_ids,
         )
-        
+
         # Add IID as a categorical column to the custom covariate file
         df = pd.read_csv(self.custom_cov_file)
         df["IID"] = ["patient" if i % 2 == 0 else "control" for i in range(n_samples)]
@@ -48,12 +48,17 @@ class TestCLI:
         """Test LD computation only mode."""
         output_prefix = os.path.join(self.temp_dir, "ld_only")
 
-        result = run_cli([
-            "--bgen", str(bgen_file),
-            "--out", output_prefix,
-            "--compute-ld",
-            "--bgi", str(bgi_file),
-        ])
+        result = run_cli(
+            [
+                "--bgen",
+                str(bgen_file),
+                "--out",
+                output_prefix,
+                "--compute-ld",
+                "--bgi",
+                str(bgi_file),
+            ]
+        )
 
         assert result.exit_code == 0
         # Check outputs
@@ -65,14 +70,21 @@ class TestCLI:
         """Test computing LD with covariate adjustment."""
         output_prefix = os.path.join(self.temp_dir, "ld_with_cov")
 
-        result = run_cli([
-            "--bgen", str(bgen_file),
-            "--out", output_prefix,
-            "--compute-ld",
-            "-c", self.cov_file,
-            "--bgi", str(bgi_file),
-            "--sample", str(sample_file),
-        ])
+        result = run_cli(
+            [
+                "--bgen",
+                str(bgen_file),
+                "--out",
+                output_prefix,
+                "--compute-ld",
+                "-c",
+                self.cov_file,
+                "--bgi",
+                str(bgi_file),
+                "--sample",
+                str(sample_file),
+            ]
+        )
 
         assert result.exit_code == 0
         # Check LD output exists
@@ -88,11 +100,15 @@ class TestCLI:
         output_prefix = os.path.join(self.temp_dir, "auto_bgi")
 
         # Run without specifying --bgi
-        result = run_cli([
-            "--bgen", temp_bgen,
-            "--out", output_prefix,
-            "--compute-ld",
-        ])
+        result = run_cli(
+            [
+                "--bgen",
+                temp_bgen,
+                "--out",
+                output_prefix,
+                "--compute-ld",
+            ]
+        )
 
         # Should succeed using auto-detected BGI
         assert result.exit_code == 0
@@ -105,11 +121,15 @@ class TestCLI:
 
         output_prefix = os.path.join(self.temp_dir, "no_bgi")
 
-        result = run_cli([
-            "--bgen", temp_bgen,
-            "--out", output_prefix,
-            "--compute-ld",
-        ])
+        result = run_cli(
+            [
+                "--bgen",
+                temp_bgen,
+                "--out",
+                output_prefix,
+                "--compute-ld",
+            ]
+        )
 
         # Should fail without BGI
         assert result.exit_code == 1
@@ -120,15 +140,23 @@ class TestCLI:
         """Test using custom ID column in covariate file."""
         output_prefix = os.path.join(self.temp_dir, "custom_id")
 
-        result = run_cli([
-            "--bgen", str(bgen_file),
-            "--out", output_prefix,
-            "--compute-ld",
-            "-c", self.custom_cov_file,
-            "--covariate-id-col", "FID",
-            "--bgi", str(bgi_file),
-            "--sample", str(sample_file),
-        ])
+        result = run_cli(
+            [
+                "--bgen",
+                str(bgen_file),
+                "--out",
+                output_prefix,
+                "--compute-ld",
+                "-c",
+                self.custom_cov_file,
+                "--covariate-id-col",
+                "FID",
+                "--bgi",
+                str(bgi_file),
+                "--sample",
+                str(sample_file),
+            ]
+        )
 
         assert result.exit_code == 0
         # Should complete successfully
@@ -138,14 +166,21 @@ class TestCLI:
         """Test error when specified ID column doesn't exist."""
         output_prefix = os.path.join(self.temp_dir, "missing_id_col")
 
-        result = run_cli([
-            "--bgen", str(bgen_file),
-            "--out", output_prefix,
-            "--compute-ld",
-            "-c", self.cov_file,
-            "--covariate-id-col", "NONEXISTENT",
-            "--bgi", str(bgi_file),
-        ])
+        result = run_cli(
+            [
+                "--bgen",
+                str(bgen_file),
+                "--out",
+                output_prefix,
+                "--compute-ld",
+                "-c",
+                self.cov_file,
+                "--covariate-id-col",
+                "NONEXISTENT",
+                "--bgi",
+                str(bgi_file),
+            ]
+        )
 
         # Should raise an error
         assert result.exit_code != 0
@@ -157,13 +192,19 @@ class TestCLI:
         for fmt in ["matrix", "long", "bcor"]:
             output_prefix = os.path.join(self.temp_dir, f"format_{fmt}")
 
-            result = run_cli([
-                "--bgen", str(bgen_file),
-                "--out", output_prefix,
-                "--compute-ld",
-                "--output-format", fmt,
-                "--bgi", str(bgi_file),
-            ])
+            result = run_cli(
+                [
+                    "--bgen",
+                    str(bgen_file),
+                    "--out",
+                    output_prefix,
+                    "--compute-ld",
+                    "--output-format",
+                    fmt,
+                    "--bgi",
+                    str(bgi_file),
+                ]
+            )
 
             assert result.exit_code == 0
 
@@ -190,13 +231,19 @@ class TestCLI:
 
         output_prefix = os.path.join(self.temp_dir, "region_test")
 
-        result = run_cli([
-            "--bgen", str(bgen_file),
-            "--out", output_prefix,
-            "--compute-ld",
-            "--region", region,
-            "--bgi", str(bgi_file),
-        ])
+        result = run_cli(
+            [
+                "--bgen",
+                str(bgen_file),
+                "--out",
+                output_prefix,
+                "--compute-ld",
+                "--region",
+                region,
+                "--bgi",
+                str(bgi_file),
+            ]
+        )
 
         assert result.exit_code == 0
         assert os.path.exists(f"{output_prefix}.ld")
@@ -208,13 +255,19 @@ class TestCLI:
 
         output_prefix = os.path.join(self.temp_dir, "z_file_test")
 
-        result = run_cli([
-            "--bgen", str(bgen_file),
-            "--out", output_prefix,
-            "--compute-ld",
-            "--z", z_file,
-            "--bgi", str(bgi_file),
-        ])
+        result = run_cli(
+            [
+                "--bgen",
+                str(bgen_file),
+                "--out",
+                output_prefix,
+                "--compute-ld",
+                "--z",
+                z_file,
+                "--bgi",
+                str(bgi_file),
+            ]
+        )
 
         assert result.exit_code == 0
         assert os.path.exists(f"{output_prefix}.ld")
@@ -225,10 +278,14 @@ class TestCLI:
         """Test error when no mode is specified."""
         output_prefix = os.path.join(self.temp_dir, "no_mode")
 
-        result = run_cli([
-            "--bgen", str(bgen_file),
-            "--out", output_prefix,
-        ])
+        result = run_cli(
+            [
+                "--bgen",
+                str(bgen_file),
+                "--out",
+                output_prefix,
+            ]
+        )
 
         assert result.exit_code != 0
 
@@ -236,11 +293,15 @@ class TestCLI:
         """Test error with invalid BGEN file."""
         output_prefix = os.path.join(self.temp_dir, "invalid_bgen")
 
-        result = run_cli([
-            "--bgen", "/nonexistent/file.bgen",
-            "--out", output_prefix,
-            "--compute-ld",
-        ])
+        result = run_cli(
+            [
+                "--bgen",
+                "/nonexistent/file.bgen",
+                "--out",
+                output_prefix,
+                "--compute-ld",
+            ]
+        )
 
         assert result.exit_code != 0
 
@@ -258,14 +319,21 @@ class TestCLI:
 
         output_prefix = os.path.join(self.temp_dir, "ws_cov")
 
-        result = run_cli([
-            "--bgen", str(bgen_file),
-            "--out", output_prefix,
-            "--compute-ld",
-            "-c", ws_cov_file,
-            "--bgi", str(bgi_file),
-            "--sample", str(sample_file),
-        ])
+        result = run_cli(
+            [
+                "--bgen",
+                str(bgen_file),
+                "--out",
+                output_prefix,
+                "--compute-ld",
+                "-c",
+                ws_cov_file,
+                "--bgi",
+                str(bgi_file),
+                "--sample",
+                str(sample_file),
+            ]
+        )
 
         # Should work with whitespace-delimited file
         assert result.exit_code == 0
@@ -275,27 +343,33 @@ class TestCLI:
         """Test verbose logging mode."""
         output_prefix = os.path.join(self.temp_dir, "verbose_test")
 
-        result = run_cli([
-            "--bgen", str(bgen_file),
-            "--out", output_prefix,
-            "--compute-ld",
-            "--verbose",
-            "--bgi", str(bgi_file),
-        ])
+        result = run_cli(
+            [
+                "--bgen",
+                str(bgen_file),
+                "--out",
+                output_prefix,
+                "--compute-ld",
+                "--verbose",
+                "--bgi",
+                str(bgi_file),
+            ]
+        )
 
         # Should complete without error
         assert result.exit_code == 0
         assert os.path.exists(f"{output_prefix}.ld")
 
-    def test_specific_covariate_columns(self, bgen_file, bgi_file, sample_file, 
-                                        create_covariate_file, run_cli):
+    def test_specific_covariate_columns(
+        self, bgen_file, bgi_file, sample_file, create_covariate_file, run_cli
+    ):
         """Test using specific columns as covariates."""
         # Create covariate file with multiple columns
         multi_cov_file = create_covariate_file(
             columns=["PC1", "PC2", "PC3", "PC4", "batch", "age"],
             categorical_cols=["batch"],
         )
-        
+
         # Add age column to the file
         df = pd.read_csv(multi_cov_file)
         df["age"] = np.random.randint(20, 80, len(df))
@@ -304,15 +378,24 @@ class TestCLI:
         output_prefix = os.path.join(self.temp_dir, "specific_cols")
 
         # Use only PC1 and PC2 as covariates
-        result = run_cli([
-            "--bgen", str(bgen_file),
-            "--out", output_prefix,
-            "--compute-ld",
-            "-c", multi_cov_file,
-            "--covariate-cols", "PC1", "PC2",
-            "--bgi", str(bgi_file),
-            "--sample", str(sample_file),
-        ])
+        result = run_cli(
+            [
+                "--bgen",
+                str(bgen_file),
+                "--out",
+                output_prefix,
+                "--compute-ld",
+                "-c",
+                multi_cov_file,
+                "--covariate-cols",
+                "PC1",
+                "PC2",
+                "--bgi",
+                str(bgi_file),
+                "--sample",
+                str(sample_file),
+            ]
+        )
 
         assert result.exit_code == 0
         # Should complete successfully
@@ -322,14 +405,22 @@ class TestCLI:
         """Test error when specifying non-existent covariate columns."""
         output_prefix = os.path.join(self.temp_dir, "invalid_cols")
 
-        result = run_cli([
-            "--bgen", str(bgen_file),
-            "--out", output_prefix,
-            "--compute-ld",
-            "-c", self.cov_file,
-            "--covariate-cols", "PC1", "NonExistentColumn",
-            "--bgi", str(bgi_file),
-        ])
+        result = run_cli(
+            [
+                "--bgen",
+                str(bgen_file),
+                "--out",
+                output_prefix,
+                "--compute-ld",
+                "-c",
+                self.cov_file,
+                "--covariate-cols",
+                "PC1",
+                "NonExistentColumn",
+                "--bgi",
+                str(bgi_file),
+            ]
+        )
 
         # Should raise an error
         assert result.exit_code != 0

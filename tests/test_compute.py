@@ -29,8 +29,9 @@ def compute_test_data(temp_dir, genotypes, variant_info, sample_ids, create_cova
         "genotypes": genotypes,
         "variant_info": variant_info,
         "sample_ids": sample_ids,
-        "cov_file": create_covariate_file()
+        "cov_file": create_covariate_file(),
     }
+
 
 # ==================== Correlation Tests ====================
 
@@ -50,9 +51,7 @@ def test_compute_correlation_matrix():
     genotypes = np.column_stack([var1, var2, var3]).astype(np.float64)
 
     # Standardize first (function expects standardized input)
-    std_genotypes, _, _ = standardize_genotypes(
-        genotypes, center=True, scale=True, inplace=False
-    )
+    std_genotypes, _, _ = standardize_genotypes(genotypes, center=True, scale=True, inplace=False)
 
     # Compute correlation
     corr_matrix = compute_correlation_matrix(std_genotypes)
@@ -65,6 +64,7 @@ def test_compute_correlation_matrix():
     assert abs(corr_matrix[0, 2]) < 0.2
     # Diagonal should be 1
     np.testing.assert_allclose(np.diag(corr_matrix), 1.0)
+
 
 @pytest.mark.parametrize("output_format", ["matrix", "long", "bcor"])
 def test_compute_ld_from_standardized(compute_test_data, output_format):
@@ -83,6 +83,7 @@ def test_compute_ld_from_standardized(compute_test_data, output_format):
         output_format=output_format,
     )
     assert os.path.exists(output_file)
+
 
 # ==================== Workflow Tests ====================
 
@@ -105,7 +106,10 @@ def test_load_and_adjust_genotypes_no_covariates(bgen_file, bgi_file, sample_fil
     col_means = np.mean(std_geno, axis=0)
     np.testing.assert_allclose(col_means, 0, atol=1e-10)
 
-def test_load_and_adjust_genotypes_with_covariates(bgen_file, bgi_file, sample_file, compute_test_data):
+
+def test_load_and_adjust_genotypes_with_covariates(
+    bgen_file, bgi_file, sample_file, compute_test_data
+):
     """Test loading and adjusting with covariates."""
     std_geno, var_info, sample_ids, means, norms = load_and_adjust_genotypes(
         genotype_file=str(bgen_file),
@@ -118,8 +122,10 @@ def test_load_and_adjust_genotypes_with_covariates(bgen_file, bgi_file, sample_f
     assert std_geno.shape[0] > 0
     assert std_geno.shape[1] > 0
 
-def test_load_and_adjust_with_custom_id_column(bgen_file, bgi_file, sample_file,
-                                                 create_covariate_file):
+
+def test_load_and_adjust_with_custom_id_column(
+    bgen_file, bgi_file, sample_file, create_covariate_file
+):
     """Test loading with custom covariate ID column."""
     # Create covariate file with custom ID column
     custom_cov_file = create_covariate_file(
@@ -140,8 +146,10 @@ def test_load_and_adjust_with_custom_id_column(bgen_file, bgi_file, sample_file,
     _, _, expected_sample_ids = load_bgen(str(bgen_file), str(bgi_file), str(sample_file))
     assert len(sample_ids) == len(expected_sample_ids)
 
-def test_sample_filtering_with_missing_covariates(bgen_file, bgi_file, sample_file,
-                                                   create_covariate_file, compute_test_data):
+
+def test_sample_filtering_with_missing_covariates(
+    bgen_file, bgi_file, sample_file, create_covariate_file, compute_test_data
+):
     """Test that samples are filtered when some lack covariate data."""
     # Create covariate file with subset of samples
     subset_samples = compute_test_data["sample_ids"][::2]  # Every other sample
@@ -162,6 +170,7 @@ def test_sample_filtering_with_missing_covariates(bgen_file, bgi_file, sample_fi
     assert len(sample_ids) == len(subset_samples)
     assert std_geno.shape[0] == len(subset_samples)
 
+
 # ==================== LDstore Comparison Tests ====================
 
 
@@ -172,7 +181,9 @@ def test_ldstore_comparison(ref_ld_file, compute_test_data):
         pytest.skip("LDstore reference file not found - skipping comparison test")
 
     # Compute LD using ldcov
-    std_geno, _, _ = standardize_genotypes(compute_test_data["genotypes"].copy(), center=True, scale=True)
+    std_geno, _, _ = standardize_genotypes(
+        compute_test_data["genotypes"].copy(), center=True, scale=True
+    )
     ldcov_ld = compute_correlation_matrix(std_geno)
 
     # Load LDstore2 reference matrix
@@ -195,8 +206,10 @@ def test_ldstore_comparison(ref_ld_file, compute_test_data):
     assert np.allclose(np.diag(ldcov_ld), 1.0), "LD matrix diagonal should be 1.0"
     assert np.allclose(ldcov_ld, ldcov_ld.T), "LD matrix should be symmetric"
 
-def test_end_to_end_workflow_validation(bgen_file, bgi_file, sample_file, 
-                                         create_covariate_file, tmp_path):
+
+def test_end_to_end_workflow_validation(
+    bgen_file, bgi_file, sample_file, create_covariate_file, tmp_path
+):
     """Test complete modular workflow with intermediate validations."""
     # Create test covariates
     cov_file = create_covariate_file(columns=["PC1", "PC2"])
@@ -239,6 +252,7 @@ def test_end_to_end_workflow_validation(bgen_file, bgi_file, sample_file,
     assert max_diag < 1.002, f"Diagonal values too high (max: {max_diag:.6f})"
 
     assert np.allclose(ld_matrix, ld_matrix.T), "LD matrix should be symmetric"
+
 
 def _load_ldstore_matrix(file_path):
     """Load LD matrix from LDstore2 output file."""

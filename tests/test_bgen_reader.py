@@ -29,6 +29,7 @@ from ldcov.io import load_bgen
 # Try to import external bgen library for comparison
 try:
     import bgen as external_bgen
+
     HAS_EXTERNAL_BGEN = True
 except ImportError:
     HAS_EXTERNAL_BGEN = False
@@ -46,7 +47,7 @@ class TestBgenReader:
         """Set up test data for BGEN reader tests."""
         self.test_files = test_bgen_files
         self.sample_file = sample_file
-        
+
         # Memory monitoring
         self.process = psutil.Process(os.getpid())
 
@@ -225,7 +226,9 @@ class TestBgenReader:
                     # Just verify we have some unique values (mean imputation can create many)
                     assert len(unique_vals) > 10
 
-    @pytest.mark.skipif(not HAS_EXTERNAL_BGEN, reason="External bgen library not available for comparison")
+    @pytest.mark.skipif(
+        not HAS_EXTERNAL_BGEN, reason="External bgen library not available for comparison"
+    )
     def test_correctness_vs_reference(self):
         """Compare results with reference implementation."""
         file_path = str(self.test_files["basic"])

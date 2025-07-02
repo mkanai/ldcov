@@ -411,32 +411,6 @@ extensions = [
         define_macros=NUMPY_MACROS,
         language="c++",
     ),
-    # V1 reader kept only for benchmarking/reference (not part of main API)
-    Extension(
-        "ldcov.io.bgen.reader_v1",
-        ["ldcov/io/bgen/reader_v1.pyx"],
-        include_dirs=[np.get_include()],
-        extra_compile_args=EXTRA_COMPILE_ARGS,
-        extra_link_args=EXTRA_LINK_ARGS,
-        define_macros=NUMPY_MACROS,
-        language="c++",
-    ),
-    # Legacy decompressor for V1 (only for benchmarking)
-    Extension(
-        "ldcov.io.bgen._decompressor",
-        [
-            "ldcov/io/bgen/_decompressor.pyx",
-            "ldcov/io/bgen/legacy/batch_decompressor.cpp",
-            "ldcov/io/bgen/legacy/sequential_decompressor.cpp",
-            "ldcov/io/bgen/legacy/buffer_pool.cpp",
-            "ldcov/io/bgen/decompress.cpp"
-        ],
-        include_dirs=[np.get_include(), "ldcov/io/bgen/legacy"],
-        extra_compile_args=EXTRA_COMPILE_ARGS,
-        extra_link_args=EXTRA_LINK_ARGS,
-        define_macros=NUMPY_MACROS,
-        language="c++",
-    ),
 ]
 
 # Build extensions
