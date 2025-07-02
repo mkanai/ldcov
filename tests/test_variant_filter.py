@@ -23,12 +23,8 @@ def test_data():
     examples_dir = Path(__file__).parents[1] / "examples"
     bgen_file = examples_dir / "data" / "data.bgen"
     bgi_file = examples_dir / "data" / "data.bgen.bgi"
-    
-    return {
-        "examples_dir": examples_dir,
-        "bgen_file": bgen_file,
-        "bgi_file": bgi_file
-    }
+
+    return {"examples_dir": examples_dir, "bgen_file": bgen_file, "bgi_file": bgi_file}
 
 
 def test_load_z_file_basic(tmp_path):
@@ -45,10 +41,10 @@ def test_load_z_file_basic(tmp_path):
     )
     z_file = tmp_path / "test.z"
     z_data.to_csv(z_file, sep="\t", index=False)
-    
+
     # Load Z-file
     variant_filter = load_variant_filter(str(z_file))
-    
+
     # Check filter structure
     assert isinstance(variant_filter, dict)
     assert len(variant_filter["rsids"]) == 2
@@ -70,10 +66,10 @@ def test_z_file_original_chromosome_format(tmp_path):
     )
     z_file1 = tmp_path / "test_chr1.z"
     z_data1.to_csv(z_file1, sep="\t", index=False)
-    
+
     variant_filter1 = load_variant_filter(str(z_file1))
     assert variant_filter1["chromosome"] == "chr1"  # Keeps original format
-    
+
     # Test 01 format
     z_data2 = pd.DataFrame(
         {
@@ -86,7 +82,7 @@ def test_z_file_original_chromosome_format(tmp_path):
     )
     z_file2 = tmp_path / "test_01.z"
     z_data2.to_csv(z_file2, sep="\t", index=False)
-    
+
     variant_filter2 = load_variant_filter(str(z_file2))
     assert variant_filter2["chromosome"] == "01"  # Keeps original format
 
@@ -98,7 +94,7 @@ def test_load_variant_filter(test_data, tmp_path):
         file_path=str(test_data["bgen_file"]),
         index_path=str(test_data["bgi_file"]),
     )
-    
+
     # Create Z-file with subset of variants
     subset_variants = variant_info.iloc[:2]
     z_data = pd.DataFrame(
@@ -112,16 +108,16 @@ def test_load_variant_filter(test_data, tmp_path):
     )
     z_file = tmp_path / "test_filter.z"
     z_data.to_csv(z_file, sep="\t", index=False)
-    
+
     # Load filter in one step
     variant_filter = load_variant_filter(str(z_file))
-    
+
     # Check that filter is a dictionary with expected keys
     assert isinstance(variant_filter, dict)
     assert "chromosome" in variant_filter
     assert "positions" in variant_filter
     assert "rsids" in variant_filter
-    
+
     # Should have same number of positions as input
     assert len(variant_filter["positions"]) == len(z_data)
 
@@ -140,7 +136,7 @@ def test_z_file_ordering(tmp_path):
     )
     z_file = tmp_path / "test_order.z"
     z_data.to_csv(z_file, sep="\t", index=False)
-    
+
     # Should raise error for unsorted positions
     with pytest.raises(ValueError, match="not sorted"):
         load_variant_filter(str(z_file))

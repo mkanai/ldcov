@@ -91,7 +91,6 @@ ldcov --bgen gs://bucket/data.bgen -c gs://bucket/covariates.txt --compute-ld --
     - `index/`: BGI index reader with SQLite3 and LRU caching
     - `io/`: I/O abstraction layer with memory-mapped file support
     - `file_reader_wrapper.h`: Header-only Python file object wrapper
-    - `reader_v1.pyx`: V1 implementation (benchmarking only, not public API)
   - `bcor_reader.py`, `bcor_writer.py`: BCOR format I/O
   - `covariate_loader.py`: Covariate loading with categorical encoding
   - `correlation_io.py`: LD matrix output formats
@@ -224,7 +223,6 @@ with BgenReader("file.bgen", decompressor_type='parallel') as reader:
 ```
 
 ### Implementation Notes:
-- V1 reader preserved in `reader_v1.pyx` for benchmarking only (not part of public API)
 - No backward compatibility parameters - clean, performance-focused design
 - Vendored compression libraries (zlib-ng, zstd) for consistency
 
