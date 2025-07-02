@@ -8,264 +8,177 @@ This module tests:
 - Error handling and validation
 """
 
-import unittest
-import sys
 import os
-import tempfile
-import shutil
-from pathlib import Path
 import pandas as pd
 import numpy as np
+import pytest
+import shutil
 
-from ldcov.cli.main import main
-from ldcov.io import load_bgen
 
-
-class TestCLI(unittest.TestCase):
+class TestCLI:
     """Test cases for CLI functionality."""
 
-    @classmethod
-    def setUpClass(cls):
-        """Set up test data."""
-        cls.examples_dir = Path(__file__).parents[1] / "examples"
-        cls.bgen_file = cls.examples_dir / "data" / "data.bgen"
-        cls.bgi_file = cls.examples_dir / "data" / "data.bgen.bgi"
-        cls.sample_file = cls.examples_dir / "data" / "data.sample"
-
-        # Create temporary directory
-        cls.temp_dir = tempfile.mkdtemp(prefix="ldcov_test_cli_")
-
-        # Load sample IDs for creating covariate files
-        _, _, cls.sample_ids = load_bgen(
-            file_path=str(cls.bgen_file),
-            index_path=str(cls.bgi_file),
-            sample_path=str(cls.sample_file),
-        )
-
+    @pytest.fixture(autouse=True)
+    def setup_test_data(self, temp_dir, sample_ids, create_covariate_file):
+        """Set up test data for CLI tests."""
+        # Store references for use in tests
+        self.temp_dir = temp_dir
+        self.sample_ids = sample_ids
+        
         # Create standard covariate file
-        n_samples = len(cls.sample_ids)
-        np.random.seed(42)
-        covariates = pd.DataFrame(
-            {
-                "IID": cls.sample_ids,
-                "PC1": np.random.normal(0, 1, n_samples),
-                "PC2": np.random.normal(0, 1, n_samples),
-                "sex": np.random.choice(["male", "female"], n_samples),
-            }
-        )
-        cls.cov_file = os.path.join(cls.temp_dir, "test_covariates.csv")
-        covariates.to_csv(cls.cov_file, index=False)
-
+        self.cov_file = create_covariate_file()
+        
         # Create covariate file with custom ID column
-        # Use FID as the matching column, and create a reasonable categorical IID column
-        covariates_custom = pd.DataFrame(
-            {
-                "FID": cls.sample_ids,
-                "IID": ["patient" if i % 2 == 0 else "control" for i in range(n_samples)],
-                "PC1": np.random.normal(0, 1, n_samples),
-                "PC2": np.random.normal(0, 1, n_samples),
-            }
+        n_samples = len(sample_ids)
+        self.custom_cov_file = create_covariate_file(
+            columns=["PC1", "PC2"],
+            id_col="FID",
+            categorical_cols=[],
+            custom_sample_ids=sample_ids,
         )
-        cls.custom_cov_file = os.path.join(cls.temp_dir, "custom_id_covariates.csv")
-        covariates_custom.to_csv(cls.custom_cov_file, index=False)
-
-    @classmethod
-    def tearDownClass(cls):
-        """Clean up test data."""
-        shutil.rmtree(cls.temp_dir)
+        
+        # Add IID as a categorical column to the custom covariate file
+        df = pd.read_csv(self.custom_cov_file)
+        df["IID"] = ["patient" if i % 2 == 0 else "control" for i in range(n_samples)]
+        df.to_csv(self.custom_cov_file, index=False)
 
     # ==================== Basic Mode Tests ====================
 
-    def test_compute_ld_only(self):
+    def test_compute_ld_only(self, bgen_file, bgi_file, run_cli):
         """Test LD computation only mode."""
         output_prefix = os.path.join(self.temp_dir, "ld_only")
 
-        sys.argv = [
-            "ldcov",
-            "--bgen",
-            str(self.bgen_file),
-            "--out",
-            output_prefix,
+        result = run_cli([
+            "--bgen", str(bgen_file),
+            "--out", output_prefix,
             "--compute-ld",
-            "--bgi",
-            str(self.bgi_file),
-        ]
+            "--bgi", str(bgi_file),
+        ])
 
-        main()
-
+        assert result.exit_code == 0
         # Check outputs
         ld_file = f"{output_prefix}.ld"
-        self.assertTrue(os.path.exists(ld_file))
-        self.assertFalse(os.path.exists(f"{output_prefix}.adj.bgen"))
+        assert os.path.exists(ld_file)
+        assert not os.path.exists(f"{output_prefix}.adj.bgen")
 
-    def test_compute_ld_with_covariates(self):
+    def test_compute_ld_with_covariates(self, bgen_file, bgi_file, sample_file, run_cli):
         """Test computing LD with covariate adjustment."""
         output_prefix = os.path.join(self.temp_dir, "ld_with_cov")
 
-        sys.argv = [
-            "ldcov",
-            "--bgen",
-            str(self.bgen_file),
-            "--out",
-            output_prefix,
+        result = run_cli([
+            "--bgen", str(bgen_file),
+            "--out", output_prefix,
             "--compute-ld",
-            "-c",
-            self.cov_file,
-            "--bgi",
-            str(self.bgi_file),
-            "--sample",
-            str(self.sample_file),
-        ]
+            "-c", self.cov_file,
+            "--bgi", str(bgi_file),
+            "--sample", str(sample_file),
+        ])
 
-        main()
-
+        assert result.exit_code == 0
         # Check LD output exists
-        self.assertTrue(os.path.exists(f"{output_prefix}.ld"))
+        assert os.path.exists(f"{output_prefix}.ld")
 
     # ==================== Auto BGI Detection Tests ====================
 
-    def test_auto_bgi_detection(self):
+    def test_auto_bgi_detection(self, create_temp_bgen, run_cli):
         """Test automatic BGI file detection."""
         # Create a temporary BGEN file with accompanying BGI
-        temp_bgen = os.path.join(self.temp_dir, "test_auto.bgen")
-        temp_bgi = os.path.join(self.temp_dir, "test_auto.bgen.bgi")
-
-        # Copy files
-        shutil.copy(str(self.bgen_file), temp_bgen)
-        shutil.copy(str(self.bgi_file), temp_bgi)
+        temp_bgen, temp_bgi = create_temp_bgen("test_auto", with_bgi=True)
 
         output_prefix = os.path.join(self.temp_dir, "auto_bgi")
 
         # Run without specifying --bgi
-        sys.argv = [
-            "ldcov",
-            "--bgen",
-            temp_bgen,
-            "--out",
-            output_prefix,
+        result = run_cli([
+            "--bgen", temp_bgen,
+            "--out", output_prefix,
             "--compute-ld",
-        ]
+        ])
 
         # Should succeed using auto-detected BGI
-        main()
+        assert result.exit_code == 0
+        assert os.path.exists(f"{output_prefix}.ld")
 
-        self.assertTrue(os.path.exists(f"{output_prefix}.ld"))
-
-    def test_no_auto_bgi_available(self):
+    def test_no_auto_bgi_available(self, create_temp_bgen, run_cli):
         """Test behavior when no BGI file exists."""
         # Create a temporary BGEN without BGI
-        temp_bgen = os.path.join(self.temp_dir, "test_no_bgi.bgen")
-        shutil.copy(str(self.bgen_file), temp_bgen)
+        temp_bgen, _ = create_temp_bgen("test_no_bgi", with_bgi=False)
 
         output_prefix = os.path.join(self.temp_dir, "no_bgi")
 
-        sys.argv = [
-            "ldcov",
-            "--bgen",
-            temp_bgen,
-            "--out",
-            output_prefix,
+        result = run_cli([
+            "--bgen", temp_bgen,
+            "--out", output_prefix,
             "--compute-ld",
-        ]
+        ])
 
-        # Should raise an error without BGI
-        with self.assertRaises(SystemExit) as context:
-            main()
-
-        # Verify it exited with error code
-        self.assertEqual(context.exception.code, 1)
+        # Should fail without BGI
+        assert result.exit_code == 1
 
     # ==================== Custom Covariate ID Column Tests ====================
 
-    def test_custom_covariate_id_column(self):
+    def test_custom_covariate_id_column(self, bgen_file, bgi_file, sample_file, run_cli):
         """Test using custom ID column in covariate file."""
         output_prefix = os.path.join(self.temp_dir, "custom_id")
 
-        sys.argv = [
-            "ldcov",
-            "--bgen",
-            str(self.bgen_file),
-            "--out",
-            output_prefix,
+        result = run_cli([
+            "--bgen", str(bgen_file),
+            "--out", output_prefix,
             "--compute-ld",
-            "-c",
-            self.custom_cov_file,
-            "--covariate-id-col",
-            "FID",
-            "--bgi",
-            str(self.bgi_file),
-            "--sample",
-            str(self.sample_file),
-        ]
+            "-c", self.custom_cov_file,
+            "--covariate-id-col", "FID",
+            "--bgi", str(bgi_file),
+            "--sample", str(sample_file),
+        ])
 
-        main()
-
+        assert result.exit_code == 0
         # Should complete successfully
-        self.assertTrue(os.path.exists(f"{output_prefix}.ld"))
+        assert os.path.exists(f"{output_prefix}.ld")
 
-    def test_missing_covariate_id_column(self):
+    def test_missing_covariate_id_column(self, bgen_file, bgi_file, run_cli):
         """Test error when specified ID column doesn't exist."""
         output_prefix = os.path.join(self.temp_dir, "missing_id_col")
 
-        sys.argv = [
-            "ldcov",
-            "--bgen",
-            str(self.bgen_file),
-            "--out",
-            output_prefix,
+        result = run_cli([
+            "--bgen", str(bgen_file),
+            "--out", output_prefix,
             "--compute-ld",
-            "-c",
-            self.cov_file,
-            "--covariate-id-col",
-            "NONEXISTENT",
-            "--bgi",
-            str(self.bgi_file),
-        ]
+            "-c", self.cov_file,
+            "--covariate-id-col", "NONEXISTENT",
+            "--bgi", str(bgi_file),
+        ])
 
         # Should raise an error
-        with self.assertRaises(SystemExit):
-            main()
+        assert result.exit_code != 0
 
     # ==================== Output Format Tests ====================
 
-    def test_output_formats(self):
+    def test_output_formats(self, bgen_file, bgi_file, run_cli):
         """Test different LD output formats."""
         for fmt in ["matrix", "long", "bcor"]:
             output_prefix = os.path.join(self.temp_dir, f"format_{fmt}")
 
-            sys.argv = [
-                "ldcov",
-                "--bgen",
-                str(self.bgen_file),
-                "--out",
-                output_prefix,
+            result = run_cli([
+                "--bgen", str(bgen_file),
+                "--out", output_prefix,
                 "--compute-ld",
-                "--output-format",
-                fmt,
-                "--bgi",
-                str(self.bgi_file),
-            ]
+                "--output-format", fmt,
+                "--bgi", str(bgi_file),
+            ])
 
-            main()
+            assert result.exit_code == 0
 
             # Check appropriate file was created
             if fmt == "matrix":
-                self.assertTrue(os.path.exists(f"{output_prefix}.ld"))
+                assert os.path.exists(f"{output_prefix}.ld")
             elif fmt == "long":
-                self.assertTrue(os.path.exists(f"{output_prefix}.ld.gz"))
+                assert os.path.exists(f"{output_prefix}.ld.gz")
             elif fmt == "bcor":
-                self.assertTrue(os.path.exists(f"{output_prefix}.bcor"))
+                assert os.path.exists(f"{output_prefix}.bcor")
 
     # ==================== Region and Z-file Tests ====================
 
-    def test_region_filtering(self):
+    def test_region_filtering(self, bgen_file, bgi_file, variant_info, run_cli):
         """Test region-based filtering."""
-        # First load some data to find a valid region
-        _, variant_info, _ = load_bgen(
-            file_path=str(self.bgen_file),
-            index_path=str(self.bgi_file),
-        )
-
         # Use a region that contains at least some variants
         first_chrom = variant_info["chrom"].iloc[0]
         min_pos = variant_info["pos"].min()
@@ -277,101 +190,63 @@ class TestCLI(unittest.TestCase):
 
         output_prefix = os.path.join(self.temp_dir, "region_test")
 
-        sys.argv = [
-            "ldcov",
-            "--bgen",
-            str(self.bgen_file),
-            "--out",
-            output_prefix,
+        result = run_cli([
+            "--bgen", str(bgen_file),
+            "--out", output_prefix,
             "--compute-ld",
-            "--region",
-            region,
-            "--bgi",
-            str(self.bgi_file),
-        ]
+            "--region", region,
+            "--bgi", str(bgi_file),
+        ])
 
-        main()
+        assert result.exit_code == 0
+        assert os.path.exists(f"{output_prefix}.ld")
 
-        self.assertTrue(os.path.exists(f"{output_prefix}.ld"))
-
-    def test_z_file_filtering(self):
+    def test_z_file_filtering(self, bgen_file, bgi_file, create_z_file, run_cli):
         """Test Z-file based variant filtering."""
-        # Load some actual variants from the BGEN file to create a valid Z-file
-        _, variant_info, _ = load_bgen(
-            file_path=str(self.bgen_file),
-            index_path=str(self.bgi_file),
-        )
-
-        # Use first 3 variants from BGEN file
-        subset_variants = variant_info.iloc[:3]
-        z_file = os.path.join(self.temp_dir, "test.z")
-        z_data = pd.DataFrame(
-            {
-                "rsid": subset_variants["rsid"].tolist(),
-                "chromosome": subset_variants["chrom"].tolist(),
-                "position": subset_variants["pos"].astype(str).tolist(),
-                "allele1": subset_variants["ref"].tolist(),
-                "allele2": subset_variants["alt"].tolist(),
-            }
-        )
-        z_data.to_csv(z_file, sep="\t", index=False)  # No compression
+        # Create Z-file with first 3 variants
+        z_file = create_z_file(n_variants=3)
 
         output_prefix = os.path.join(self.temp_dir, "z_file_test")
 
-        sys.argv = [
-            "ldcov",
-            "--bgen",
-            str(self.bgen_file),
-            "--out",
-            output_prefix,
+        result = run_cli([
+            "--bgen", str(bgen_file),
+            "--out", output_prefix,
             "--compute-ld",
-            "--z",
-            z_file,
-            "--bgi",
-            str(self.bgi_file),
-        ]
+            "--z", z_file,
+            "--bgi", str(bgi_file),
+        ])
 
-        main()
-
-        self.assertTrue(os.path.exists(f"{output_prefix}.ld"))
+        assert result.exit_code == 0
+        assert os.path.exists(f"{output_prefix}.ld")
 
     # ==================== Error Handling Tests ====================
 
-    def test_no_mode_specified(self):
+    def test_no_mode_specified(self, bgen_file, run_cli):
         """Test error when no mode is specified."""
         output_prefix = os.path.join(self.temp_dir, "no_mode")
 
-        sys.argv = [
-            "ldcov",
-            "--bgen",
-            str(self.bgen_file),
-            "--out",
-            output_prefix,
-        ]
+        result = run_cli([
+            "--bgen", str(bgen_file),
+            "--out", output_prefix,
+        ])
 
-        with self.assertRaises(SystemExit):
-            main()
+        assert result.exit_code != 0
 
-    def test_invalid_bgen_file(self):
+    def test_invalid_bgen_file(self, run_cli):
         """Test error with invalid BGEN file."""
         output_prefix = os.path.join(self.temp_dir, "invalid_bgen")
 
-        sys.argv = [
-            "ldcov",
-            "--bgen",
-            "/nonexistent/file.bgen",
-            "--out",
-            output_prefix,
+        result = run_cli([
+            "--bgen", "/nonexistent/file.bgen",
+            "--out", output_prefix,
             "--compute-ld",
-        ]
+        ])
 
-        with self.assertRaises(SystemExit):
-            main()
+        assert result.exit_code != 0
 
-    def test_whitespace_delimited_covariates(self):
+    def test_whitespace_delimited_covariates(self, bgen_file, bgi_file, sample_file, run_cli):
         """Test loading whitespace-delimited covariate file."""
-        # Create tab-delimited file (more reliable than space-delimited)
-        # Use more samples to avoid rank deficiency issues
+        # Create tab-delimited file
         ws_cov_file = os.path.join(self.temp_dir, "whitespace_cov.txt")
         with open(ws_cov_file, "w") as f:
             f.write("IID\tPC1\tPC2\n")
@@ -383,116 +258,78 @@ class TestCLI(unittest.TestCase):
 
         output_prefix = os.path.join(self.temp_dir, "ws_cov")
 
-        sys.argv = [
-            "ldcov",
-            "--bgen",
-            str(self.bgen_file),
-            "--out",
-            output_prefix,
+        result = run_cli([
+            "--bgen", str(bgen_file),
+            "--out", output_prefix,
             "--compute-ld",
-            "-c",
-            ws_cov_file,
-            "--bgi",
-            str(self.bgi_file),
-            "--sample",
-            str(self.sample_file),
-        ]
+            "-c", ws_cov_file,
+            "--bgi", str(bgi_file),
+            "--sample", str(sample_file),
+        ])
 
         # Should work with whitespace-delimited file
-        main()
+        assert result.exit_code == 0
+        assert os.path.exists(f"{output_prefix}.ld")
 
-        self.assertTrue(os.path.exists(f"{output_prefix}.ld"))
-
-    def test_verbose_mode(self):
+    def test_verbose_mode(self, bgen_file, bgi_file, run_cli):
         """Test verbose logging mode."""
         output_prefix = os.path.join(self.temp_dir, "verbose_test")
 
-        sys.argv = [
-            "ldcov",
-            "--bgen",
-            str(self.bgen_file),
-            "--out",
-            output_prefix,
+        result = run_cli([
+            "--bgen", str(bgen_file),
+            "--out", output_prefix,
             "--compute-ld",
             "--verbose",
-            "--bgi",
-            str(self.bgi_file),
-        ]
+            "--bgi", str(bgi_file),
+        ])
 
         # Should complete without error
-        main()
+        assert result.exit_code == 0
+        assert os.path.exists(f"{output_prefix}.ld")
 
-        self.assertTrue(os.path.exists(f"{output_prefix}.ld"))
-
-    def test_specific_covariate_columns(self):
+    def test_specific_covariate_columns(self, bgen_file, bgi_file, sample_file, 
+                                        create_covariate_file, run_cli):
         """Test using specific columns as covariates."""
         # Create covariate file with multiple columns
-        n_samples = len(self.sample_ids)
-        np.random.seed(42)
-        covariates_multi = pd.DataFrame(
-            {
-                "IID": self.sample_ids,
-                "PC1": np.random.normal(0, 1, n_samples),
-                "PC2": np.random.normal(0, 1, n_samples),
-                "PC3": np.random.normal(0, 1, n_samples),
-                "PC4": np.random.normal(0, 1, n_samples),
-                "batch": np.random.choice(["A", "B", "C"], n_samples),
-                "age": np.random.randint(20, 80, n_samples),
-            }
+        multi_cov_file = create_covariate_file(
+            columns=["PC1", "PC2", "PC3", "PC4", "batch", "age"],
+            categorical_cols=["batch"],
         )
-        multi_cov_file = os.path.join(self.temp_dir, "multi_covariates.csv")
-        covariates_multi.to_csv(multi_cov_file, index=False)
+        
+        # Add age column to the file
+        df = pd.read_csv(multi_cov_file)
+        df["age"] = np.random.randint(20, 80, len(df))
+        df.to_csv(multi_cov_file, index=False)
 
         output_prefix = os.path.join(self.temp_dir, "specific_cols")
 
         # Use only PC1 and PC2 as covariates
-        sys.argv = [
-            "ldcov",
-            "--bgen",
-            str(self.bgen_file),
-            "--out",
-            output_prefix,
+        result = run_cli([
+            "--bgen", str(bgen_file),
+            "--out", output_prefix,
             "--compute-ld",
-            "-c",
-            multi_cov_file,
-            "--covariate-cols",
-            "PC1",
-            "PC2",
-            "--bgi",
-            str(self.bgi_file),
-            "--sample",
-            str(self.sample_file),
-        ]
+            "-c", multi_cov_file,
+            "--covariate-cols", "PC1", "PC2",
+            "--bgi", str(bgi_file),
+            "--sample", str(sample_file),
+        ])
 
-        main()
-
+        assert result.exit_code == 0
         # Should complete successfully
-        self.assertTrue(os.path.exists(f"{output_prefix}.ld"))
+        assert os.path.exists(f"{output_prefix}.ld")
 
-    def test_invalid_covariate_columns(self):
+    def test_invalid_covariate_columns(self, bgen_file, bgi_file, run_cli):
         """Test error when specifying non-existent covariate columns."""
         output_prefix = os.path.join(self.temp_dir, "invalid_cols")
 
-        sys.argv = [
-            "ldcov",
-            "--bgen",
-            str(self.bgen_file),
-            "--out",
-            output_prefix,
+        result = run_cli([
+            "--bgen", str(bgen_file),
+            "--out", output_prefix,
             "--compute-ld",
-            "-c",
-            self.cov_file,
-            "--covariate-cols",
-            "PC1",
-            "NonExistentColumn",
-            "--bgi",
-            str(self.bgi_file),
-        ]
+            "-c", self.cov_file,
+            "--covariate-cols", "PC1", "NonExistentColumn",
+            "--bgi", str(bgi_file),
+        ])
 
         # Should raise an error
-        with self.assertRaises(SystemExit):
-            main()
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert result.exit_code != 0

@@ -13,17 +13,13 @@ Tests:
 - Format support (8-bit, 16-bit, 32-bit, v1.1, v1.2)
 """
 
-import unittest
+import pytest
 import numpy as np
 import pandas as pd
-from pathlib import Path
-import tempfile
-import shutil
 import time
 import psutil
 import os
 import gc
-from typing import Optional, Tuple, List
 import logging
 
 # Import our BGEN reader
@@ -33,7 +29,6 @@ from ldcov.io import load_bgen
 # Try to import external bgen library for comparison
 try:
     import bgen as external_bgen
-
     HAS_EXTERNAL_BGEN = True
 except ImportError:
     HAS_EXTERNAL_BGEN = False
@@ -43,35 +38,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class TestBgenReader(unittest.TestCase):
+class TestBgenReader:
     """Comprehensive test suite for the BGEN reader implementation."""
 
-    @classmethod
-    def setUpClass(cls):
-        """Set up test data paths."""
-        cls.examples_dir = Path(__file__).parents[1] / "examples" / "data"
-        cls.temp_dir = tempfile.mkdtemp(prefix="ldcov_test_bgen_v2_")
-
-        # Test files
-        cls.test_files = {
-            "basic": cls.examples_dir / "data.bgen",
-            "8bit": cls.examples_dir / "example.8bits.bgen",
-            "16bit": cls.examples_dir / "example.16bits.bgen",
-            "32bit": cls.examples_dir / "example.32bits.bgen",
-            "zstd": cls.examples_dir / "example.16bits.zstd.bgen",
-            "v11": cls.examples_dir / "example.v11.bgen",
-        }
-
-        # Sample files
-        cls.sample_file = cls.examples_dir / "data.sample"
-
+    @pytest.fixture(autouse=True)
+    def setup_test_data(self, test_bgen_files, sample_file):
+        """Set up test data for BGEN reader tests."""
+        self.test_files = test_bgen_files
+        self.sample_file = sample_file
+        
         # Memory monitoring
-        cls.process = psutil.Process(os.getpid())
-
-    @classmethod
-    def tearDownClass(cls):
-        """Clean up temporary directory."""
-        shutil.rmtree(cls.temp_dir, ignore_errors=True)
+        self.process = psutil.Process(os.getpid())
 
     def _get_memory_usage(self):
         """Get current memory usage in MB."""
@@ -84,18 +61,18 @@ class TestBgenReader(unittest.TestCase):
         # Test with context manager
         with BgenReader(file_path) as reader:
             # Check basic properties
-            self.assertGreater(reader.nvariants, 0)
-            self.assertGreater(reader.nsamples, 0)
+            assert reader.nvariants > 0
+            assert reader.nsamples > 0
 
             # Load variants
             dosages, variant_info = reader.load_variants()
-            self.assertIsNotNone(dosages)
-            self.assertIsNotNone(variant_info)
-            self.assertEqual(dosages.shape[0], reader.nsamples)
-            self.assertEqual(dosages.shape[1], len(variant_info))
+            assert dosages is not None
+            assert variant_info is not None
+            assert dosages.shape[0] == reader.nsamples
+            assert dosages.shape[1] == len(variant_info)
 
             # Check dosage values are valid
-            self.assertTrue(np.all((dosages >= 0) & (dosages <= 2)))
+            assert np.all((dosages >= 0) & (dosages <= 2))
 
     def test_sequential_access(self):
         """Test sequential variant access pattern."""
@@ -110,8 +87,8 @@ class TestBgenReader(unittest.TestCase):
             logger.info(f"Sequential access time: {sequential_time:.3f}s")
 
             # Verify results
-            self.assertEqual(dosages.shape[1], len(variant_info))
-            self.assertTrue(np.all((dosages >= 0) & (dosages <= 2)))
+            assert dosages.shape[1] == len(variant_info)
+            assert np.all((dosages >= 0) & (dosages <= 2))
 
     def test_adaptive_decompressor(self):
         """Test adaptive decompressor selection."""
@@ -123,12 +100,12 @@ class TestBgenReader(unittest.TestCase):
             dosages, _ = reader.load_variants()
 
             # Verify it works correctly
-            self.assertGreater(dosages.shape[1], 0)
+            assert dosages.shape[1] > 0
 
-    def test_sample_filtering(self):
+    def test_sample_filtering(self, sample_file):
         """Test sample filtering functionality."""
         file_path = str(self.test_files["basic"])
-        sample_file = str(self.sample_file)
+        sample_file = str(sample_file)
 
         # Load all samples first
         with BgenReader(file_path, sample_path=sample_file) as reader:
@@ -142,19 +119,19 @@ class TestBgenReader(unittest.TestCase):
             dosages, variant_info = reader.load_variants(sample_indices=sample_indices)
 
             # Verify filtering worked
-            self.assertEqual(dosages.shape[0], len(sample_indices))
+            assert dosages.shape[0] == len(sample_indices)
 
             # Get filtered sample IDs
             sample_ids = [all_samples[i] for i in sample_indices]
 
             # Verify correct samples were selected
             for i, idx in enumerate(sample_indices):
-                self.assertEqual(sample_ids[i], all_samples[idx])
+                assert sample_ids[i] == all_samples[idx]
 
     def test_error_handling(self):
         """Test error handling for various edge cases."""
         # Test non-existent file
-        with self.assertRaises(FileNotFoundError):
+        with pytest.raises(FileNotFoundError):
             BgenReader("non_existent_file.bgen")
 
         # Test invalid sample indices
@@ -202,12 +179,12 @@ class TestBgenReader(unittest.TestCase):
 
         # Skip memory comparison if either memory measurement is negative (can happen with small files)
         if full_mem > 0 and filtered_mem > 0 and full_size[0] > 100:
-            self.assertLess(filtered_mem, full_mem * 0.6)
+            assert filtered_mem < full_mem * 0.6
         else:
             # For small files or unreliable memory measurements,
             # just verify that filtering worked (shape is correct)
-            self.assertEqual(filtered_size[0], n_subset)
-            self.assertEqual(filtered_size[1], full_size[1])
+            assert filtered_size[0] == n_subset
+            assert filtered_size[1] == full_size[1]
             logger.info(
                 f"Small test file or unreliable memory measurement - verified shape instead"
             )
@@ -217,7 +194,7 @@ class TestBgenReader(unittest.TestCase):
         # Test zlib compressed (default)
         if self.test_files["basic"].exists():
             dosages_zlib, _, _ = load_bgen(str(self.test_files["basic"]), show_progress=False)
-            self.assertIsNotNone(dosages_zlib)
+            assert dosages_zlib is not None
 
         # Test zstd compressed
         if self.test_files["zstd"].exists():
@@ -225,7 +202,7 @@ class TestBgenReader(unittest.TestCase):
                 dosages_zstd, _, _ = load_bgen(
                     str(self.test_files["zstd"]), show_progress=False, nan_action="mean"
                 )
-                self.assertIsNotNone(dosages_zstd)
+                assert dosages_zstd is not None
             except Exception as e:
                 # ZSTD support might not be available
                 logger.warning(f"ZSTD test skipped: {e}")
@@ -238,17 +215,17 @@ class TestBgenReader(unittest.TestCase):
                     str(self.test_files[file_key]), show_progress=False, nan_action="mean"
                 )
 
-                self.assertIsNotNone(dosages)
-                self.assertTrue(np.all((dosages >= 0) & (dosages <= 2)))
+                assert dosages is not None
+                assert np.all((dosages >= 0) & (dosages <= 2))
 
                 # Check precision is appropriate for bit depth
                 if bit_depth == 8:
                     # 8-bit has precision of 1/255 but mean imputation can create many unique values
                     unique_vals = np.unique(dosages)
                     # Just verify we have some unique values (mean imputation can create many)
-                    self.assertGreater(len(unique_vals), 10)
+                    assert len(unique_vals) > 10
 
-    @unittest.skipIf(not HAS_EXTERNAL_BGEN, "External bgen library not available for comparison")
+    @pytest.mark.skipif(not HAS_EXTERNAL_BGEN, reason="External bgen library not available for comparison")
     def test_correctness_vs_reference(self):
         """Compare results with reference implementation."""
         file_path = str(self.test_files["basic"])
@@ -270,7 +247,7 @@ class TestBgenReader(unittest.TestCase):
         ref_dosages = np.column_stack(ref_dosages)
 
         # Compare shapes
-        self.assertEqual(our_dosages.shape, ref_dosages.shape)
+        assert our_dosages.shape == ref_dosages.shape
 
         # Compare metadata
         np.testing.assert_array_equal(our_info["pos"].values, ref_positions)
@@ -320,8 +297,8 @@ class TestBgenReader(unittest.TestCase):
 
         with BgenReader(file_path) as reader:
             # Just verify it loads without errors
-            self.assertGreater(reader.nsamples, 0)
-            self.assertGreater(reader.nvariants, 0)
+            assert reader.nsamples > 0
+            assert reader.nvariants > 0
 
     def test_decompressor_types(self):
         """Test different decompressor types."""
@@ -381,8 +358,8 @@ class TestBgenReader(unittest.TestCase):
                 )
 
             # Verify the region query returned expected variants
-            self.assertGreater(len(region_info), 0)
-            self.assertLessEqual(len(region_info), 5)
+            assert len(region_info) > 0
+            assert len(region_info) <= 5
 
     def test_concurrent_readers(self):
         """Test multiple readers on the same file."""
@@ -410,7 +387,3 @@ class TestBgenReader(unittest.TestCase):
             # Clean up
             for reader in readers:
                 reader.close()
-
-
-if __name__ == "__main__":
-    unittest.main()
