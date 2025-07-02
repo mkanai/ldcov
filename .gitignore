@@ -96,6 +96,7 @@ ldcov/io/bgen/header.cpp
 ldcov/io/bgen/reader.cpp
 ldcov/io/bgen/variant.cpp
 ldcov/io/bgen/_reader_v2.cpp
+ldcov/io/bgen/reader_v1.cpp
 ldcov/**/*.c
 *.so
 *.html
@@ -110,3 +111,4 @@ reference_only/
 
 # Benchmark test data (large BGEN files)
 benchmarks/test_data/
+ldcov/io/bgen/reader_v1.cpp
