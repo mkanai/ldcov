@@ -353,24 +353,11 @@ void GenotypeParser::computeDosagesV12Direct(const uint8_t* buffer, size_t size,
     max_ploidy &= 0x3F;
     bool constant_ploidy = (min_ploidy == max_ploidy);
 
-    // CRITICAL FIX: Actually read and store the missing data flags
-    std::vector<bool> missing(n_samples, false);
-
-    if (constant_ploidy) {
-        // CRITICAL FIX: For constant ploidy in BGEN v1.2, ploidy data is n_samples bytes (not bit
-        // array) Each byte contains ploidy and missing info, consistent with legacy reader behavior
-        for (uint32_t i = 0; i < n_samples; ++i) {
-            uint8_t ploidy_missing = *ptr++;
-            missing[i] = (ploidy_missing & 0x80) != 0;
-            // Note: We don't need to store ploidy since it's constant (min_ploidy == max_ploidy)
-        }
-    } else {
-        // Variable ploidy - read ploidy/missing bytes
-        for (uint32_t i = 0; i < n_samples; ++i) {
-            uint8_t ploidy_missing = *ptr++;
-            missing[i] = (ploidy_missing & 0x80) != 0;
-        }
-    }
+    // Save pointer to missing data for single-pass processing
+    const uint8_t* missing_data_ptr = ptr;
+    
+    // Skip missing data section
+    ptr += n_samples;
 
     // Skip phase info
     ptr++;
@@ -383,59 +370,31 @@ void GenotypeParser::computeDosagesV12Direct(const uint8_t* buffer, size_t size,
                                  std::to_string(bits_per_prob));
     }
 
-    // Check if we can use SIMD for dosage computation
-    bool use_simd = can_use_simd_dosage() && !missing.empty();
-
-    if (use_simd) {
-        // Use SIMD for batch processing when no missing data or with missing mask
-        const uint8_t* missing_mask = nullptr;
-        std::vector<uint8_t> missing_bits;
-
-        // Convert missing array to bit mask if needed
-        if (std::any_of(missing.begin(), missing.end(), [](bool m) { return m; })) {
-            missing_bits.resize((n_samples + 7) / 8, 0);
-            for (uint32_t i = 0; i < n_samples; ++i) {
-                if (missing[i]) {
-                    missing_bits[i / 8] |= (1 << (i % 8));
-                }
-            }
-            missing_mask = missing_bits.data();
-        }
-
-        // Call appropriate SIMD function based on bit depth
-        switch (bits_per_prob) {
-            case 8:
-                simd::compute_dosages_8bit_simd(ptr, output, n_samples, missing_mask);
-                return;  // SIMD processing completed
-            case 16:
-                simd::compute_dosages_16bit_simd(ptr, output, n_samples, missing_mask);
-                return;  // SIMD processing completed
-            case 32:
-                simd::compute_dosages_32bit_simd(ptr, output, n_samples, missing_mask);
-                return;  // SIMD processing completed
-        }
-    }
-
-    // Fallback to scalar processing
-    // Read probability data for biallelic case (3 probs per sample)
+    // Single-pass processing: read missing status and probabilities together
+    const uint8_t* prob_ptr = ptr;
+    
     for (uint32_t i = 0; i < n_samples; ++i) {
-        if (missing[i]) {
+        // Read missing status for this sample
+        uint8_t ploidy_missing = missing_data_ptr[i];
+        bool is_missing = (ploidy_missing & 0x80) != 0;
+        
+        if (is_missing) {
             // Sample is missing - output NaN
             output[i] = std::nanf("");
 
             // Skip probability data for this sample
             if (bits_per_prob == 8) {
-                ptr += 2;  // Skip 2 bytes (prob_aa, prob_ab)
+                prob_ptr += 2;  // Skip 2 bytes (prob_aa, prob_ab)
             } else if (bits_per_prob == 16) {
-                ptr += 4;  // Skip 4 bytes (2 x uint16_t)
+                prob_ptr += 4;  // Skip 4 bytes (2 x uint16_t)
             } else {       // 32 bits
-                ptr += 8;  // Skip 8 bytes (2 x uint32_t)
+                prob_ptr += 8;  // Skip 8 bytes (2 x uint32_t)
             }
         } else {
             // Read and compute dosage
             if (bits_per_prob == 8) {
-                uint8_t prob_aa = *ptr++;
-                uint8_t prob_ab = *ptr++;
+                uint8_t prob_aa = *prob_ptr++;
+                uint8_t prob_ab = *prob_ptr++;
                 // prob_bb is implicit = 255 - prob_aa - prob_ab
 
                 // Additional check for invalid data
@@ -446,10 +405,10 @@ void GenotypeParser::computeDosagesV12Direct(const uint8_t* buffer, size_t size,
                     output[i] = (prob_ab + 2.0f * prob_bb) / 255.0f;
                 }
             } else if (bits_per_prob == 16) {
-                uint16_t prob_aa = readLE<uint16_t>(ptr);
-                ptr += 2;
-                uint16_t prob_ab = readLE<uint16_t>(ptr);
-                ptr += 2;
+                uint16_t prob_aa = readLE<uint16_t>(prob_ptr);
+                prob_ptr += 2;
+                uint16_t prob_ab = readLE<uint16_t>(prob_ptr);
+                prob_ptr += 2;
 
                 // Additional check for invalid data
                 if (prob_aa + prob_ab > 65535) {
@@ -459,10 +418,10 @@ void GenotypeParser::computeDosagesV12Direct(const uint8_t* buffer, size_t size,
                     output[i] = (prob_ab + 2.0f * prob_bb) / 65535.0f;
                 }
             } else {  // 32 bits
-                uint32_t prob_aa = readLE<uint32_t>(ptr);
-                ptr += 4;
-                uint32_t prob_ab = readLE<uint32_t>(ptr);
-                ptr += 4;
+                uint32_t prob_aa = readLE<uint32_t>(prob_ptr);
+                prob_ptr += 4;
+                uint32_t prob_ab = readLE<uint32_t>(prob_ptr);
+                prob_ptr += 4;
 
                 // Additional check for invalid data
                 if (static_cast<uint64_t>(prob_aa) + prob_ab > 4294967295UL) {
@@ -478,7 +437,7 @@ void GenotypeParser::computeDosagesV12Direct(const uint8_t* buffer, size_t size,
     }
 
     // Verify we consumed the expected amount of data
-    size_t expected_ptr_offset = ptr - buffer;
+    size_t expected_ptr_offset = prob_ptr - buffer;
     if (expected_ptr_offset > size) {
         throw std::runtime_error("Buffer overrun while parsing genotype data");
     }
