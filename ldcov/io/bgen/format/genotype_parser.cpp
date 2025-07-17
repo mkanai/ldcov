@@ -294,6 +294,14 @@ void GenotypeParser::computeDosagesV11Direct(const uint8_t* buffer, size_t size,
         throw std::runtime_error("Buffer too small for v1.1 genotype data");
     }
 
+    // Check if we can use SIMD optimization
+    if (can_use_simd_dosage()) {
+        // Use SIMD-optimized implementation
+        simd::compute_dosages_v11_simd(buffer, n_samples, output);
+        return;
+    }
+
+    // Fallback to scalar implementation
     const uint8_t* ptr = buffer;
 
     for (uint32_t i = 0; i < n_samples; ++i) {
@@ -351,7 +359,7 @@ void GenotypeParser::computeDosagesV12Direct(const uint8_t* buffer, size_t size,
 
     min_ploidy &= 0x3F;
     max_ploidy &= 0x3F;
-    bool constant_ploidy = (min_ploidy == max_ploidy);
+    // bool constant_ploidy = (min_ploidy == max_ploidy);  // Unused in this function
 
     // Save pointer to missing data for single-pass processing
     const uint8_t* missing_data_ptr = ptr;

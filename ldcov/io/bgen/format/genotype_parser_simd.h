@@ -73,6 +73,15 @@ void compute_dosages_filtered_simd(const uint8_t* prob_data, float* output,
                                    const int* sample_indices, size_t n_indices,
                                    uint8_t bits_per_prob, const uint8_t* missing_mask = nullptr);
 
+/**
+ * Compute dosages for BGEN v1.1 format using SIMD.
+ *
+ * @param buffer Pointer to v1.1 genotype data (6 bytes per sample)
+ * @param n_samples Number of samples to process
+ * @param output Output dosages array
+ */
+void compute_dosages_v11_simd(const uint8_t* buffer, size_t n_samples, float* output);
+
 }  // namespace simd
 
 }  // namespace bgen
