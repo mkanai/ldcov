@@ -17,13 +17,15 @@ ldcov is a Python package for efficient linkage disequilibrium (LD) calculation 
 
 ## Development Commands
 
+**IMPORTANT**: ALWAYS use `uv` for package management and Python operations.
+
 ```bash
 # Install for development
-make install
+uv pip install -e . --no-build-isolation
 
 # Run tests
-make test
-pytest tests/test_specific.py::test_name  # Run specific test
+uv run pytest tests/
+uv run pytest tests/test_specific.py::test_name  # Run specific test
 
 # Code quality
 make lint      # Check code style

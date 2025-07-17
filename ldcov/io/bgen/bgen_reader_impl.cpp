@@ -404,14 +404,23 @@ class BgenReaderImpl::Impl {
         std::vector<decompress::CompressedVariant> compressed_variants;
         compressed_variants.reserve(variants.size());
 
-        // Read all compressed data first
+        // Phase 1: Calculate total buffer size needed
+        size_t total_buffer_size = 0;
         for (const auto& metadata : variants) {
-            // Read compressed genotype data
-            auto compressed_data = std::unique_ptr<std::vector<uint8_t>>(
-                new std::vector<uint8_t>(metadata.genotype_length));
+            total_buffer_size += metadata.genotype_length;
+        }
 
+        // Phase 2: Allocate single large buffer for all compressed data
+        auto consolidated_buffer = std::unique_ptr<std::vector<uint8_t>>(
+            new std::vector<uint8_t>(total_buffer_size));
+        
+        // Phase 3: Read all variant data into the consolidated buffer
+        size_t current_offset = 0;
+        for (const auto& metadata : variants) {
+            // Read compressed genotype data directly into the consolidated buffer
+            uint8_t* dest_ptr = consolidated_buffer->data() + current_offset;
             size_t bytes_read = file_reader_->read_at(
-                metadata.genotype_offset, compressed_data->data(), metadata.genotype_length);
+                metadata.genotype_offset, dest_ptr, metadata.genotype_length);
 
             if (bytes_read != metadata.genotype_length) {
                 throw std::runtime_error("Failed to read genotype data for variant " +
@@ -419,7 +428,7 @@ class BgenReaderImpl::Impl {
             }
 
             // Handle v1.2 format
-            const uint8_t* data_ptr = compressed_data->data();
+            const uint8_t* data_ptr = dest_ptr;
             size_t compressed_size = metadata.genotype_length;
             size_t uncompressed_size = 0;
 
@@ -451,9 +460,6 @@ class BgenReaderImpl::Impl {
                 uncompressed_size = header_.nsamples * 6;
             }
 
-            // Store the buffer for later use
-            compressed_buffers_.push_back(std::move(compressed_data));
-
             // Create compressed variant
             auto comp_type = static_cast<decompress::CompressionType>(header_.compression);
 
@@ -468,7 +474,14 @@ class BgenReaderImpl::Impl {
             compressed_variants.emplace_back(metadata.file_offset, data_ptr, compressed_size,
                                              uncompressed_size, comp_type);
             compressed_variants.back().variant_id = metadata.varid;
+            
+            // Update offset for next variant
+            current_offset += metadata.genotype_length;
         }
+
+        // Store the consolidated buffer (replace the old vector approach)
+        compressed_buffers_.clear();
+        compressed_buffers_.push_back(std::move(consolidated_buffer));
 
         // Decompress in batch
         auto results = decompressor_->decompress_batch(compressed_variants);
