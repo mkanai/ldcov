@@ -77,6 +77,24 @@ class FileReader {
      * @return Filename or description
      */
     virtual const std::string& filename() const = 0;
+
+    /**
+     * Advise kernel about memory access pattern for a specific region
+     *
+     * This method provides hints to the kernel about expected access patterns
+     * for memory-mapped files. For non-memory-mapped implementations, this
+     * is a no-op.
+     *
+     * @param offset Starting offset in the file
+     * @param length Length of the region
+     * @param advice Kernel advice (e.g., MADV_WILLNEED, MADV_RANDOM)
+     */
+    virtual void advise(uint64_t offset, size_t length, int advice) {
+        // Default implementation is a no-op
+        (void)offset;
+        (void)length;
+        (void)advice;
+    }
 };
 
 }  // namespace bgen

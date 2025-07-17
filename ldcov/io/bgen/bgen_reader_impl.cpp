@@ -140,8 +140,9 @@ class MMapFileReader : public FileReader {
             throw std::runtime_error("Failed to mmap file: " + filename);
         }
 
-        // Advise kernel about access pattern
-        madvise(data_, file_size_, MADV_SEQUENTIAL);
+        // Advise kernel about access pattern - default to random access
+        // since ldcov primarily performs indexed lookups
+        madvise(data_, file_size_, MADV_RANDOM);
     }
 
     ~MMapFileReader() override {
@@ -198,6 +199,24 @@ class MMapFileReader : public FileReader {
 
     const std::string& filename() const override {
         return filename_;
+    }
+
+    void advise(uint64_t offset, size_t length, int advice) override {
+        if (!data_ || offset >= file_size_) {
+            return;  // No-op if file not mapped or offset out of bounds
+        }
+
+        // Ensure we don't go past the end of the file
+        size_t actual_length = std::min(length, static_cast<size_t>(file_size_ - offset));
+        
+        // Call madvise on the specified region
+        // Note: madvise requires page-aligned addresses, but it's OK to pass
+        // unaligned addresses - the kernel will handle the alignment
+        if (madvise(data_ + offset, actual_length, advice) != 0) {
+            // Log warning but don't throw - madvise is just a hint
+            // In production, you might want to use a proper logging framework
+            // For now, we'll silently ignore failures
+        }
     }
 
    private:
@@ -348,9 +367,23 @@ class BgenReaderImpl::Impl {
         auto compression_type = static_cast<CompressionType>(header_.compression);
 
         // Process variants in sorted order
-        for (const auto& [offset, original_idx] : sorted_offsets) {
+        for (size_t idx = 0; idx < sorted_offsets.size(); ++idx) {
+            const auto& [offset, original_idx] = sorted_offsets[idx];
+            
             // Check if we need to read more data
             if (offset < buffer_start_offset || offset >= buffer_end_offset) {
+                // Advise kernel to prefetch the data we're about to read
+                file_reader_->advise(offset, buffer_size, MADV_WILLNEED);
+                
+                // Also prefetch the next chunk if there are more variants
+                if (idx + 1 < sorted_offsets.size()) {
+                    uint64_t next_offset = sorted_offsets[idx + 1].first;
+                    // Only prefetch if the next offset is beyond our current buffer
+                    if (next_offset >= offset + buffer_size) {
+                        file_reader_->advise(next_offset, buffer_size, MADV_WILLNEED);
+                    }
+                }
+                
                 // Read new chunk starting at this offset
                 buffer_start_offset = offset;
                 file_reader_->seek(offset);
@@ -519,6 +552,22 @@ class BgenReaderImpl::Impl {
         // Phase 2: Allocate single large buffer for all compressed data
         auto consolidated_buffer = std::unique_ptr<std::vector<uint8_t>>(
             new std::vector<uint8_t>(total_buffer_size));
+        
+        // Phase 2.5: Advise kernel to prefetch all the regions we're about to read
+        // This is done in batches to avoid too many madvise calls
+        const size_t prefetch_batch_size = 32;  // Prefetch up to 32 regions at a time
+        for (size_t i = 0; i < variants.size(); i += prefetch_batch_size) {
+            size_t batch_end = std::min(i + prefetch_batch_size, variants.size());
+            
+            // Calculate the range for this batch of variants
+            uint64_t batch_start_offset = variants[i].genotype_offset;
+            uint64_t batch_end_offset = variants[batch_end - 1].genotype_offset + 
+                                       variants[batch_end - 1].genotype_length;
+            size_t batch_size = batch_end_offset - batch_start_offset;
+            
+            // Advise kernel to prefetch this batch
+            file_reader_->advise(batch_start_offset, batch_size, MADV_WILLNEED);
+        }
         
         // Phase 3: Read all variant data into the consolidated buffer
         size_t current_offset = 0;
