@@ -73,16 +73,34 @@ size_t ParallelDecompressor::TaskQueue::size() const {
 }
 
 // ResultCollector implementation
+void ParallelDecompressor::ResultCollector::initialize(size_t batch_size) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    results_.clear();
+    results_.resize(batch_size);  // All pointers start as nullptr
+    ready_results_.clear();
+    ready_results_.reserve(batch_size);
+    next_expected_id_ = 0;
+    error_occurred_ = false;
+    error_message_.clear();
+}
+
 void ParallelDecompressor::ResultCollector::add_result(size_t task_id, DecompressedData result) {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    // Store the result
-    results_[task_id] = std::move(result);
+    // Direct placement into vector at task_id index (O(1) operation)
+    if (task_id < results_.size()) {
+        results_[task_id] = std::unique_ptr<DecompressedData>(
+            new DecompressedData(std::move(result)));
+    } else {
+        // This should not happen if properly initialized
+        throw std::runtime_error("Task ID " + std::to_string(task_id) + 
+                                 " exceeds batch size " + std::to_string(results_.size()));
+    }
 
     // Check if we can move any results to ready queue
-    while (results_.find(next_expected_id_) != results_.end()) {
-        ready_results_.push_back(std::move(results_[next_expected_id_]));
-        results_.erase(next_expected_id_);
+    while (next_expected_id_ < results_.size() && results_[next_expected_id_]) {
+        ready_results_.push_back(std::move(*results_[next_expected_id_]));
+        results_[next_expected_id_].reset();  // Clear the pointer
         next_expected_id_++;
     }
 
@@ -223,8 +241,8 @@ std::vector<DecompressedData> ParallelDecompressor::decompress_batch(
         return {};
     }
 
-    // Reset result collector and task ID counter for new batch
-    result_collector_.reset();
+    // Initialize result collector with batch size for vector pre-allocation
+    result_collector_.initialize(variants.size());
     next_task_id_ = 0;  // Reset task ID counter to ensure proper ordering
 
     // Submit all tasks

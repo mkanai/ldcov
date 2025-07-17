@@ -169,11 +169,14 @@ class ParallelDecompressor : public VariantDecompressor {
         void reset();
         void report_error(const std::string& error_message);
         size_t ready_count() const;
+        void initialize(size_t batch_size);
 
        private:
         mutable std::mutex mutex_;
         std::condition_variable cv_;
-        std::unordered_map<size_t, DecompressedData> results_;
+        // Vector-based storage for O(1) direct indexing
+        // Using unique_ptr for move-only DecompressedData objects
+        std::vector<std::unique_ptr<DecompressedData>> results_;
         size_t next_expected_id_ = 0;
         std::vector<DecompressedData> ready_results_;
         std::atomic<bool> error_occurred_{false};
