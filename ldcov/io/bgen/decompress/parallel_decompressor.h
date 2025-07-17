@@ -147,6 +147,7 @@ class ParallelDecompressor : public VariantDecompressor {
        public:
         void push(std::unique_ptr<DecompressionTask> task);
         std::unique_ptr<DecompressionTask> pop();
+        std::unique_ptr<DecompressionTask> pop_with_timeout(std::chrono::milliseconds timeout);
         void shutdown();
         size_t size() const;
         bool is_shutdown() const {
@@ -167,6 +168,7 @@ class ParallelDecompressor : public VariantDecompressor {
         std::vector<DecompressedData> collect_results(size_t count);
         void reset();
         void report_error(const std::string& error_message);
+        size_t ready_count() const;
 
        private:
         mutable std::mutex mutex_;
@@ -180,6 +182,9 @@ class ParallelDecompressor : public VariantDecompressor {
 
     // Worker thread function
     void worker_thread_function(WorkerState* state);
+
+    // Process a single task (called by workers and main thread)
+    void process_single_task(std::unique_ptr<DecompressionTask> task, WorkerState* state);
 
     // Decompress a single variant (called by workers)
     DecompressedData decompress_variant(const CompressedVariant& variant, WorkerState* state);

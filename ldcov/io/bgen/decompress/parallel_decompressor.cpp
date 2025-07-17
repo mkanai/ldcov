@@ -45,6 +45,20 @@ std::unique_ptr<ParallelDecompressor::DecompressionTask> ParallelDecompressor::T
     return task;
 }
 
+std::unique_ptr<ParallelDecompressor::DecompressionTask> ParallelDecompressor::TaskQueue::pop_with_timeout(
+    std::chrono::milliseconds timeout) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    bool got_item = cv_.wait_for(lock, timeout, [this] { return !queue_.empty() || shutdown_; });
+
+    if (!got_item || queue_.empty()) {
+        return nullptr;
+    }
+
+    auto task = std::move(queue_.front());
+    queue_.pop();
+    return task;
+}
+
 void ParallelDecompressor::TaskQueue::shutdown() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -124,6 +138,11 @@ void ParallelDecompressor::ResultCollector::report_error(const std::string& erro
     error_occurred_ = true;
     error_message_ = error_message;
     cv_.notify_all();  // Wake up any waiting threads
+}
+
+size_t ParallelDecompressor::ResultCollector::ready_count() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return ready_results_.size();
 }
 
 // ParallelDecompressor implementation
@@ -236,8 +255,62 @@ std::vector<DecompressedData> ParallelDecompressor::decompress_batch(
         }
     }
 
+    // Main thread participates in decompression work
+    // Process tasks until all results are collected
+    size_t results_needed = variants.size();
+    size_t results_collected = 0;
+    
+    // Create a main thread state for decompression
+    WorkerState main_state;
+    main_state.thread_id = static_cast<size_t>(-1);  // Special ID for main thread
+    main_state.buffer_manager = std::move(main_buffer_manager_);
+    main_state.io_buffer = std::unique_ptr<uint8_t[]>(new uint8_t[parallel_config_.io_buffer_size]);
+    
+    try {
+        while (results_collected < results_needed) {
+            // Try to get a task from the queue with a short timeout
+            auto task = task_queue_.pop_with_timeout(std::chrono::milliseconds(10));
+            
+            if (task) {
+                // Process the task
+                process_single_task(std::move(task), &main_state);
+            }
+            
+            // Check how many results are ready
+            results_collected = result_collector_.ready_count();
+        }
+    } catch (...) {
+        // Restore main_buffer_manager_ before rethrowing
+        main_buffer_manager_ = std::move(main_state.buffer_manager);
+        throw;
+    }
+    
+    // Restore main_buffer_manager_
+    main_buffer_manager_ = std::move(main_state.buffer_manager);
+    
     // Collect results in order
     return result_collector_.collect_results(variants.size());
+}
+
+void ParallelDecompressor::process_single_task(std::unique_ptr<DecompressionTask> task,
+                                               WorkerState* state) {
+    auto start = std::chrono::high_resolution_clock::now();
+
+    // Decompress the variant
+    DecompressedData result = decompress_variant(task->variant, state);
+
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
+
+    // Update worker statistics
+    state->variants_processed.fetch_add(1);
+    if (result.success) {
+        state->bytes_decompressed.fetch_add(result.size);
+    }
+    state->decompression_time_ns.fetch_add(duration.count());
+
+    // Add to result collector first (moves result)
+    result_collector_.add_result(task->task_id, std::move(result));
 }
 
 void ParallelDecompressor::worker_thread_function(WorkerState* state) {
@@ -249,23 +322,8 @@ void ParallelDecompressor::worker_thread_function(WorkerState* state) {
                 break;  // Queue was shut down
             }
 
-            auto start = std::chrono::high_resolution_clock::now();
-
-            // Decompress the variant
-            DecompressedData result = decompress_variant(task->variant, state);
-
-            auto end = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
-
-            // Update worker statistics
-            state->variants_processed.fetch_add(1);
-            if (result.success) {
-                state->bytes_decompressed.fetch_add(result.size);
-            }
-            state->decompression_time_ns.fetch_add(duration.count());
-
-            // Add to result collector first (moves result)
-            result_collector_.add_result(task->task_id, std::move(result));
+            // Process the task using the shared helper
+            process_single_task(std::move(task), state);
         }
     } catch (const std::exception& e) {
         // Report error to result collector
