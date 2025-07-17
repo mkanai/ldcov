@@ -21,7 +21,7 @@ namespace bgen {
 namespace decompress {
 
 // TaskQueue implementation
-void ParallelDecompressor::TaskQueue::push(std::unique_ptr<DecompressionTask> task) {
+void ParallelDecompressor::TaskQueue::push(DecompressionTask task) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (shutdown_) {
@@ -32,31 +32,31 @@ void ParallelDecompressor::TaskQueue::push(std::unique_ptr<DecompressionTask> ta
     cv_.notify_one();
 }
 
-std::unique_ptr<ParallelDecompressor::DecompressionTask> ParallelDecompressor::TaskQueue::pop() {
+bool ParallelDecompressor::TaskQueue::pop(DecompressionTask& task) {
     std::unique_lock<std::mutex> lock(mutex_);
     cv_.wait(lock, [this] { return !queue_.empty() || shutdown_; });
 
     if (queue_.empty()) {
-        return nullptr;
+        return false;
     }
 
-    auto task = std::move(queue_.front());
+    task = std::move(queue_.front());
     queue_.pop();
-    return task;
+    return true;
 }
 
-std::unique_ptr<ParallelDecompressor::DecompressionTask> ParallelDecompressor::TaskQueue::pop_with_timeout(
-    std::chrono::milliseconds timeout) {
+bool ParallelDecompressor::TaskQueue::pop_with_timeout(
+    DecompressionTask& task, std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lock(mutex_);
     bool got_item = cv_.wait_for(lock, timeout, [this] { return !queue_.empty() || shutdown_; });
 
     if (!got_item || queue_.empty()) {
-        return nullptr;
+        return false;
     }
 
-    auto task = std::move(queue_.front());
+    task = std::move(queue_.front());
     queue_.pop();
-    return task;
+    return true;
 }
 
 void ParallelDecompressor::TaskQueue::shutdown() {
@@ -260,8 +260,8 @@ std::vector<DecompressedData> ParallelDecompressor::decompress_batch(
             }
         }
 
-        // Create task with sequential ID for proper ordering
-        auto task = std::unique_ptr<DecompressionTask>(new DecompressionTask(i, variants[i]));
+        // Create task with sequential ID for proper ordering (stack allocation)
+        DecompressionTask task(i, variants[i]);
 
         // Submit task
         task_queue_.push(std::move(task));
@@ -287,11 +287,10 @@ std::vector<DecompressedData> ParallelDecompressor::decompress_batch(
     try {
         while (results_collected < results_needed) {
             // Try to get a task from the queue with a short timeout
-            auto task = task_queue_.pop_with_timeout(std::chrono::milliseconds(10));
-            
-            if (task) {
+            DecompressionTask task;
+            if (task_queue_.pop_with_timeout(task, std::chrono::milliseconds(10))) {
                 // Process the task
-                process_single_task(std::move(task), &main_state);
+                process_single_task(task, &main_state);
             }
             
             // Check how many results are ready
@@ -310,12 +309,12 @@ std::vector<DecompressedData> ParallelDecompressor::decompress_batch(
     return result_collector_.collect_results(variants.size());
 }
 
-void ParallelDecompressor::process_single_task(std::unique_ptr<DecompressionTask> task,
+void ParallelDecompressor::process_single_task(const DecompressionTask& task,
                                                WorkerState* state) {
     auto start = std::chrono::high_resolution_clock::now();
 
     // Decompress the variant
-    DecompressedData result = decompress_variant(task->variant, state);
+    DecompressedData result = decompress_variant(task.variant, state);
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
@@ -328,20 +327,20 @@ void ParallelDecompressor::process_single_task(std::unique_ptr<DecompressionTask
     state->decompression_time_ns.fetch_add(duration.count());
 
     // Add to result collector first (moves result)
-    result_collector_.add_result(task->task_id, std::move(result));
+    result_collector_.add_result(task.task_id, std::move(result));
 }
 
 void ParallelDecompressor::worker_thread_function(WorkerState* state) {
     try {
         while (!shutdown_) {
             // Get next task
-            auto task = task_queue_.pop();
-            if (!task) {
+            DecompressionTask task;
+            if (!task_queue_.pop(task)) {
                 break;  // Queue was shut down
             }
 
             // Process the task using the shared helper
-            process_single_task(std::move(task), state);
+            process_single_task(task, state);
         }
     } catch (const std::exception& e) {
         // Report error to result collector

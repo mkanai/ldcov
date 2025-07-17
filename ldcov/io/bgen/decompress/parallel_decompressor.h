@@ -124,9 +124,11 @@ class ParallelDecompressor : public VariantDecompressor {
     struct DecompressionTask {
         size_t task_id;                          // Unique task ID for ordering
         CompressedVariant variant;               // Variant to decompress
-        std::promise<DecompressedData> promise;  // Promise for result
 
         DecompressionTask(size_t id, CompressedVariant v) : task_id(id), variant(std::move(v)) {}
+        
+        // Default constructor for queue operations
+        DecompressionTask() : task_id(0), variant(0, nullptr, 0, 0, CompressionType::None) {}
     };
 
     // Worker thread state
@@ -145,9 +147,9 @@ class ParallelDecompressor : public VariantDecompressor {
     // Thread-safe task queue
     class TaskQueue {
        public:
-        void push(std::unique_ptr<DecompressionTask> task);
-        std::unique_ptr<DecompressionTask> pop();
-        std::unique_ptr<DecompressionTask> pop_with_timeout(std::chrono::milliseconds timeout);
+        void push(DecompressionTask task);
+        bool pop(DecompressionTask& task);
+        bool pop_with_timeout(DecompressionTask& task, std::chrono::milliseconds timeout);
         void shutdown();
         size_t size() const;
         bool is_shutdown() const {
@@ -157,7 +159,7 @@ class ParallelDecompressor : public VariantDecompressor {
        private:
         mutable std::mutex mutex_;
         std::condition_variable cv_;
-        std::queue<std::unique_ptr<DecompressionTask>> queue_;
+        std::queue<DecompressionTask> queue_;
         std::atomic<bool> shutdown_{false};
     };
 
@@ -187,7 +189,7 @@ class ParallelDecompressor : public VariantDecompressor {
     void worker_thread_function(WorkerState* state);
 
     // Process a single task (called by workers and main thread)
-    void process_single_task(std::unique_ptr<DecompressionTask> task, WorkerState* state);
+    void process_single_task(const DecompressionTask& task, WorkerState* state);
 
     // Decompress a single variant (called by workers)
     DecompressedData decompress_variant(const CompressedVariant& variant, WorkerState* state);

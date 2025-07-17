@@ -327,7 +327,7 @@ class TestGCSIntegration:
             assert len(variant_info) == dosages.shape[1]
 
             # Verify variant info has expected columns
-            expected_cols = {"chr", "pos", "ref", "alt"}
+            expected_cols = {"chrom", "pos", "rsid", "ref", "alt"}
             assert expected_cols.issubset(variant_info.columns)
 
         except Exception as e:
