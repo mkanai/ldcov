@@ -32,7 +32,7 @@ RUN if [ -d .git ]; then \
 # Stage 2: Build and run environment
 FROM python:3.11-slim
 
-# Install system dependencies
+# Install system dependencies and profiling tools
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -41,6 +41,8 @@ RUN apt-get update && apt-get install -y \
     sqlite3 \
     libsqlite3-dev \
     git \
+    linux-perf \
+    graphviz \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the checked-out code from previous stage
@@ -60,7 +62,7 @@ ENV LDCOV_USE_SYSTEM_LIBS=0
 RUN pip install --upgrade pip && \
     pip install numpy cython && \
     pip install -e . && \
-    pip install psutil memory_profiler pandas matplotlib seaborn
+    pip install psutil memory_profiler pandas matplotlib seaborn gprof2dot snakeviz
 
 # Create directories for mounting
 RUN mkdir -p /data/test_data /app/benchmarks /results
@@ -70,6 +72,9 @@ ENV PYTHONUNBUFFERED=1
 ENV OMP_NUM_THREADS=4
 ENV MKL_NUM_THREADS=4
 ENV NUMEXPR_NUM_THREADS=4
+
+# Note about perf: Container needs to be run with --cap-add=SYS_ADMIN for perf to work
+# Example: docker run --cap-add=SYS_ADMIN -v $(pwd)/results:/results ldcov:benchmark
 
 # Default command
 CMD ["python", "--version"]

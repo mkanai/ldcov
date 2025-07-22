@@ -16,6 +16,9 @@ import numpy as np
 import tempfile
 import shutil
 import argparse
+import cProfile
+import pstats
+import io
 
 # Test configurations
 TEST_CONFIGS = [
@@ -36,15 +39,21 @@ WORKFLOWS = [
 
 
 class BenchmarkRunner:
-    def __init__(self, data_dir="/data/test_data", output_dir="/results", num_runs=3):
+    def __init__(self, data_dir="/data/test_data", output_dir="/results", num_runs=3, profile=False):
         self.data_dir = Path(data_dir)
         self.output_dir = Path(output_dir)
         self.num_runs = num_runs
         self.commit = os.environ.get("GIT_COMMIT", "unknown")
         self.process = psutil.Process()
+        self.profile = profile
         
         # Create temp directory for outputs
         self.temp_dir = Path(tempfile.mkdtemp())
+        
+        # Create profile output directory if profiling is enabled
+        if self.profile:
+            self.profile_dir = Path(output_dir) / "profiles"
+            self.profile_dir.mkdir(parents=True, exist_ok=True)
         
     def __del__(self):
         # Cleanup temp directory
@@ -106,6 +115,108 @@ class BenchmarkRunner:
                 allele2 = "G"
                 f.write(f"{rsid}\t{chrom}\t{pos}\t{allele1}\t{allele2}\n")
     
+    def _run_with_profiling(self, cmd, name):
+        """Run command with profiling enabled."""
+        profile_results = {"result": None}
+        
+        # Prepare profile output files
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        python_profile_file = self.profile_dir / f"{name}_{timestamp}_python.prof"
+        python_stats_file = self.profile_dir / f"{name}_{timestamp}_python_stats.txt"
+        perf_data_file = self.profile_dir / f"{name}_{timestamp}_perf.data"
+        perf_report_file = self.profile_dir / f"{name}_{timestamp}_perf_report.txt"
+        flame_graph_file = self.profile_dir / f"{name}_{timestamp}_flame.svg"
+        
+        # Python profiling with cProfile
+        if cmd[0] == "ldcov":
+            # Run with Python profiling by calling the ldcov.cli.main module directly
+            python_cmd = ["python", "-m", "cProfile", "-o", str(python_profile_file), "-m", "ldcov.cli.main"] + cmd[1:]
+            result = subprocess.run(
+                python_cmd,
+                capture_output=True,
+                text=True,
+                cwd=self.temp_dir
+            )
+            
+            # Generate stats report
+            if python_profile_file.exists():
+                stats = pstats.Stats(str(python_profile_file))
+                stats.strip_dirs()
+                stats.sort_stats('cumulative', 'time')
+                
+                # Save stats to file
+                with open(python_stats_file, 'w') as f:
+                    stream = io.StringIO()
+                    stats.stream = stream
+                    stats.print_stats(50)  # Top 50 functions
+                    stats.print_callers(20)  # Top 20 callers
+                    f.write(stream.getvalue())
+        else:
+            # Regular subprocess run for non-Python commands
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=self.temp_dir
+            )
+        
+        # C++ profiling with perf (if available and for ldcov commands)
+        if cmd[0] == "ldcov" and shutil.which("perf"):
+            # Run with perf record using the same Python module approach
+            perf_cmd = ["perf", "record", "-F", "99", "-g", "-o", str(perf_data_file), "--", "python", "-m", "ldcov.cli.main"] + cmd[1:]
+            perf_result = subprocess.run(
+                perf_cmd,
+                capture_output=True,
+                text=True,
+                cwd=self.temp_dir
+            )
+            
+            # Generate perf report
+            if perf_data_file.exists():
+                report_cmd = ["perf", "report", "--no-children", "--stdio", "-i", str(perf_data_file)]
+                report_result = subprocess.run(
+                    report_cmd,
+                    capture_output=True,
+                    text=True
+                )
+                
+                with open(perf_report_file, 'w') as f:
+                    f.write(report_result.stdout)
+                
+                # Try to generate flame graph if perf script is available
+                if shutil.which("perf") and shutil.which("flamegraph.pl"):
+                    try:
+                        # Export perf data
+                        script_cmd = ["perf", "script", "-i", str(perf_data_file)]
+                        script_result = subprocess.run(
+                            script_cmd,
+                            capture_output=True,
+                            text=True
+                        )
+                        
+                        # Generate flame graph
+                        flame_cmd = ["flamegraph.pl"]
+                        flame_result = subprocess.run(
+                            flame_cmd,
+                            input=script_result.stdout,
+                            capture_output=True,
+                            text=True
+                        )
+                        
+                        with open(flame_graph_file, 'w') as f:
+                            f.write(flame_result.stdout)
+                    except:
+                        pass  # Flame graph generation is optional
+        
+        profile_results["result"] = result
+        profile_results["python_profile"] = str(python_profile_file) if python_profile_file.exists() else None
+        profile_results["python_stats"] = str(python_stats_file) if python_stats_file.exists() else None
+        profile_results["perf_data"] = str(perf_data_file) if perf_data_file.exists() else None
+        profile_results["perf_report"] = str(perf_report_file) if perf_report_file.exists() else None
+        profile_results["flame_graph"] = str(flame_graph_file) if flame_graph_file.exists() else None
+        
+        return profile_results
+    
     def measure_command(self, cmd, name):
         """Run command and measure performance."""
         metrics = {
@@ -114,7 +225,10 @@ class BenchmarkRunner:
             "runs": []
         }
         
-        for run in range(self.num_runs):
+        # If profiling is enabled, we only do one run
+        runs_to_do = 1 if self.profile else self.num_runs
+        
+        for run in range(runs_to_do):
             # Clear caches (best effort)
             try:
                 subprocess.run(["sync"], check=False)
@@ -130,14 +244,21 @@ class BenchmarkRunner:
             
             # Run command
             try:
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    cwd=self.temp_dir
-                )
-                success = result.returncode == 0
-                error = result.stderr if not success else None
+                if self.profile:
+                    # For profiling, we need to run with different tools
+                    profile_results = self._run_with_profiling(cmd, name)
+                    result = profile_results["result"]
+                    success = result.returncode == 0
+                    error = result.stderr if not success else None
+                else:
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        cwd=self.temp_dir
+                    )
+                    success = result.returncode == 0
+                    error = result.stderr if not success else None
             except Exception as e:
                 success = False
                 error = str(e)
@@ -158,6 +279,16 @@ class BenchmarkRunner:
             
             if error:
                 run_metrics["error"] = error
+            
+            # Add profiling info if available
+            if self.profile and "profile_results" in locals():
+                run_metrics["profile_files"] = {
+                    "python_profile": profile_results.get("python_profile"),
+                    "python_stats": profile_results.get("python_stats"),
+                    "perf_data": profile_results.get("perf_data"),
+                    "perf_report": profile_results.get("perf_report"),
+                    "flame_graph": profile_results.get("flame_graph")
+                }
             
             metrics["runs"].append(run_metrics)
             
@@ -309,7 +440,15 @@ class BenchmarkRunner:
         
         # Create filename with commit and timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"benchmark_{self.commit[:8]}_{timestamp}.json"
+        
+        if self.profile:
+            # For profiling runs, save a summary file with references to profile files
+            filename = f"profile_{self.commit[:8]}_{timestamp}.json"
+            print(f"\nProfile results saved to: {self.profile_dir}")
+            print("Note: Profile files are not included in JSON output")
+        else:
+            filename = f"benchmark_{self.commit[:8]}_{timestamp}.json"
+        
         output_file = self.output_dir / filename
         
         with open(output_file, 'w') as f:
@@ -317,10 +456,11 @@ class BenchmarkRunner:
         
         print(f"\nResults saved to: {output_file}")
         
-        # Also save as latest for easy access
-        latest_file = self.output_dir / f"benchmark_{self.commit[:8]}_latest.json"
-        with open(latest_file, 'w') as f:
-            json.dump(results, f, indent=2)
+        # Also save as latest for easy access (but not in profile mode)
+        if not self.profile:
+            latest_file = self.output_dir / f"benchmark_{self.commit[:8]}_latest.json"
+            with open(latest_file, 'w') as f:
+                json.dump(results, f, indent=2)
         
         return output_file
 
@@ -333,14 +473,22 @@ def main():
                         help="Directory for output results")
     parser.add_argument("--num-runs", type=int, default=3,
                         help="Number of runs per benchmark")
+    parser.add_argument("--profile", action="store_true",
+                        help="Enable profiling mode (Python cProfile + perf). Note: This will slow down execution and only run once")
     args = parser.parse_args()
     
-    print(f"Running ldcov benchmarks for commit: {os.environ.get('GIT_COMMIT', 'unknown')}")
+    mode = "profiling" if args.profile else "benchmarking"
+    print(f"Running ldcov {mode} for commit: {os.environ.get('GIT_COMMIT', 'unknown')}")
+    
+    if args.profile:
+        print("Note: Profiling mode enabled. Only one run will be performed per benchmark.")
+        print("      Results will include Python cProfile and perf data.")
     
     runner = BenchmarkRunner(
         data_dir=args.data_dir,
         output_dir=args.output_dir,
-        num_runs=args.num_runs
+        num_runs=args.num_runs,
+        profile=args.profile
     )
     
     results = runner.run_benchmark()

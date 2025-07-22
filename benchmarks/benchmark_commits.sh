@@ -18,6 +18,7 @@ DATA_DIR="$(pwd)/benchmarks/test_data"
 LOG_DIR="benchmark_logs"
 FORCE_REBUILD=false
 NUM_RUNS=3
+PROFILE_MODE=false
 
 # Colors for output
 RED='\033[0;31m'
@@ -53,6 +54,7 @@ OPTIONS:
     -n, --num-runs NUM       Number of runs per benchmark (default: $NUM_RUNS)
     --dockerfile FILE        Dockerfile to use (default: $DOCKERFILE)
     --force-rebuild          Force rebuild of Docker images
+    --profile                Enable profiling mode (Python cProfile + perf)
     -h, --help               Display this help message
 
 EXAMPLES:
@@ -108,6 +110,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --force-rebuild)
             FORCE_REBUILD=true
+            shift
+            ;;
+        --profile)
+            PROFILE_MODE=true
             shift
             ;;
         -h|--help)
@@ -232,22 +238,40 @@ run_benchmark() {
     # Make OUTPUT_DIR absolute
     local abs_output_dir=$(cd "$OUTPUT_DIR" && pwd)
     
+    # Prepare docker run command with optional profiling
+    local docker_cmd=(
+        docker run
+        --rm
+        -v "$abs_output_dir:$results_dir"
+        -v "$DATA_DIR:/data/test_data:ro"
+        -v "$repo_root/benchmarks:/app/benchmarks:ro"
+        -e GIT_COMMIT="$commit"
+    )
+    
+    # Add capability for perf if profiling is enabled
+    if [[ "$PROFILE_MODE" == "true" ]]; then
+        docker_cmd+=(--cap-add=SYS_ADMIN)
+    fi
+    
+    docker_cmd+=("$tag" python /app/benchmarks/run_benchmark.py)
+    docker_cmd+=(--output-dir "$results_dir")
+    docker_cmd+=(--num-runs "$NUM_RUNS")
+    
+    # Add profile flag if enabled
+    if [[ "$PROFILE_MODE" == "true" ]]; then
+        docker_cmd+=(--profile)
+    fi
+    
     # Run the benchmark
-    if docker run \
-        --rm \
-        -v "$abs_output_dir:$results_dir" \
-        -v "$DATA_DIR:/data/test_data:ro" \
-        -v "$repo_root/benchmarks:/app/benchmarks:ro" \
-        -e GIT_COMMIT="$commit" \
-        "$tag" \
-        python /app/benchmarks/run_benchmark.py \
-        --output-dir "$results_dir" \
-        --num-runs "$NUM_RUNS" \
-        > "$log_file" 2>&1; then
+    if "${docker_cmd[@]}" > "$log_file" 2>&1; then
         print_status "Successfully completed benchmark for $commit"
         
         # Show summary
-        local result_file=$(ls -t "$OUTPUT_DIR"/benchmark_${commit:0:8}_*.json | head -1)
+        if [[ "$PROFILE_MODE" == "true" ]]; then
+            local result_file=$(ls -t "$OUTPUT_DIR"/profile_${commit:0:8}_*.json | head -1)
+        else
+            local result_file=$(ls -t "$OUTPUT_DIR"/benchmark_${commit:0:8}_*.json | head -1)
+        fi
         if [[ -f "$result_file" ]]; then
             print_status "Results saved to: $(basename "$result_file")"
         fi
@@ -266,6 +290,11 @@ echo "  - Output directory: $OUTPUT_DIR"
 echo "  - Test data: $DATA_DIR"
 echo "  - Runs per benchmark: $NUM_RUNS"
 echo "  - Force rebuild: $FORCE_REBUILD"
+echo "  - Profile mode: $PROFILE_MODE"
+if [[ "$PROFILE_MODE" == "true" ]]; then
+    echo "  - Note: Profiling enabled (Python cProfile + perf)"
+    echo "  - Profile results will be in: $OUTPUT_DIR/profiles/"
+fi
 echo ""
 
 # Track failures
@@ -341,33 +370,35 @@ echo ""
 print_status "Results saved to: $OUTPUT_DIR"
 print_status "Logs saved to: $LOG_DIR"
 
-# Create a summary file
-summary_file="$OUTPUT_DIR/benchmark_summary_$(date +%Y%m%d_%H%M%S).txt"
-{
-    echo "Benchmark Summary - $(date)"
-    echo "========================="
-    echo ""
-    echo "Commits benchmarked:"
-    for commit in "${successful_builds[@]}"; do
-        if [[ ! " ${failed_runs[@]} " =~ " ${commit} " ]]; then
-            echo "  - $commit: SUCCESS"
-            # Find the latest result file for this commit
-            result_file=$(ls -t "$OUTPUT_DIR"/benchmark_${commit:0:8}_*.json 2>/dev/null | head -1)
-            if [[ -f "$result_file" ]]; then
-                echo "    Result: $(basename "$result_file")"
+# Create a summary file (but not in profile mode)
+if [[ "$PROFILE_MODE" != "true" ]]; then
+    summary_file="$OUTPUT_DIR/benchmark_summary_$(date +%Y%m%d_%H%M%S).txt"
+    {
+        echo "Benchmark Summary - $(date)"
+        echo "========================="
+        echo ""
+        echo "Commits benchmarked:"
+        for commit in "${successful_builds[@]}"; do
+            if [[ ! " ${failed_runs[@]} " =~ " ${commit} " ]]; then
+                echo "  - $commit: SUCCESS"
+                # Find the latest result file for this commit
+                result_file=$(ls -t "$OUTPUT_DIR"/benchmark_${commit:0:8}_*.json 2>/dev/null | head -1)
+                if [[ -f "$result_file" ]]; then
+                    echo "    Result: $(basename "$result_file")"
+                fi
+            else
+                echo "  - $commit: FAILED"
             fi
-        else
-            echo "  - $commit: FAILED"
-        fi
-    done
-    echo ""
-    echo "Failed builds:"
-    for commit in "${failed_builds[@]}"; do
-        echo "  - $commit"
-    done
-} > "$summary_file"
-
-print_status "Summary saved to: $summary_file"
+        done
+        echo ""
+        echo "Failed builds:"
+        for commit in "${failed_builds[@]}"; do
+            echo "  - $commit"
+        done
+    } > "$summary_file"
+    
+    print_status "Summary saved to: $summary_file"
+fi
 
 # Exit with appropriate code
 if [[ ${#failed_builds[@]} -gt 0 || ${#failed_runs[@]} -gt 0 ]]; then

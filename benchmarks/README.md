@@ -70,6 +70,90 @@ The benchmarks use test data files in `test_data/` with various configurations:
 - `comparison_results/throughput_timeline.png`: Throughput plot
 - `comparison_results/performance_heatmap.png`: Performance change heatmap
 
+## Profiling
+
+The benchmark system supports comprehensive profiling for both Python and C++ code to identify performance bottlenecks.
+
+### Quick Start
+
+```bash
+# Profile a single commit
+./benchmark_commits.sh --profile HEAD
+
+# Profile multiple commits
+./benchmark_commits.sh --profile commit1 commit2
+
+# Analyze profiling results
+./analyze_profiles.py benchmark_results/profiles/
+```
+
+### Important Notes
+
+- **Performance Impact**: Profiling slows down execution significantly. Results are not comparable with regular benchmarks.
+- **Single Run**: When profiling is enabled, only one run is performed (instead of the default 3).
+- **Output Location**: Profile files are saved to `<output_dir>/profiles/`
+- **Container Permissions**: The script automatically adds `--cap-add=SYS_ADMIN` for perf to work.
+
+### Profile Output Files
+
+For each profiled workflow, the following files are generated:
+
+#### Python Profiling Files
+- `<workflow>_<timestamp>_python.prof` - Raw cProfile data
+- `<workflow>_<timestamp>_python_stats.txt` - Human-readable statistics (top 50 functions, callers)
+
+#### C++ Profiling Files (if perf is available)
+- `<workflow>_<timestamp>_perf.data` - Raw perf data
+- `<workflow>_<timestamp>_perf_report.txt` - Perf report output
+- `<workflow>_<timestamp>_flame.svg` - Flame graph (if flamegraph.pl is available)
+
+### Analyzing Profile Results
+
+```bash
+# Analyze all profiles in a directory
+./analyze_profiles.py benchmark_results/profiles/
+
+# Generate only summary report
+./analyze_profiles.py --summary-only benchmark_results/profiles/
+
+# Manual analysis with snakeviz (interactive visualization)
+snakeviz benchmark_results/profiles/*_python.prof
+
+# Generate call graph
+gprof2dot -f pstats profile.prof | dot -Tsvg -o callgraph.svg
+```
+
+### Identifying Optimization Opportunities
+
+Look for:
+1. Functions with high cumulative time (including subcalls)
+2. Functions with high total time (excluding subcalls)
+3. Functions called many times with small individual time
+4. High CPU usage in specific C++ functions
+5. Memory allocation hotspots
+
+### Example Profiling Workflow
+
+```bash
+# 1. Profile the current implementation
+./benchmark_commits.sh --profile HEAD
+
+# 2. Analyze results
+./analyze_profiles.py benchmark_results/profiles/
+
+# 3. Identify top bottlenecks
+cat benchmark_results/profiles/analysis/*_python_stats.txt | head -100
+
+# 4. Implement optimizations
+# ... make code changes ...
+
+# 5. Profile the optimized version
+./benchmark_commits.sh --profile HEAD
+
+# 6. Compare results
+diff benchmark_results/profiles/analysis/*_analysis.txt
+```
+
 ## Advanced Usage
 
 ### Custom Benchmark Options
@@ -120,6 +204,13 @@ The comparison script automatically detects performance regressions:
 - **Runtime errors**: Check `benchmark_logs/run_<commit>.log`
 - **Missing test data**: Ensure `test_data/` directory is present
 - **Permission issues**: Run with appropriate Docker permissions
+
+### Profiling Issues
+
+- **ImportError: No module named ldcov.__main__**: Fixed by using `python -m ldcov.cli.main` instead
+- **Perf permission denied**: Ensure container runs with `--cap-add=SYS_ADMIN`
+- **Missing flame graphs**: Install flamegraph.pl from brendangregg/FlameGraph
+- **Empty profile files**: Check if command failed or execution time was too short
 
 ## Requirements
 
