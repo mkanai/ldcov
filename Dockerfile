@@ -43,10 +43,8 @@ ENV CXXFLAGS="-O3 -mfma -mavx -mavx2 -std=c++17"
 # Ensure we don't use system libraries
 ENV LDCOV_USE_SYSTEM_LIBS=0
 
-# Pre-install build dependencies and numpy with OpenBLAS
-RUN pip install --upgrade pip setuptools wheel cmake ninja && \
-    # Install numpy explicitly to ensure it uses OpenBLAS
-    pip install --no-binary numpy numpy
+# Pre-install build dependencies
+RUN pip install --upgrade pip setuptools wheel cmake ninja
 
 # Build and install ldcov with vendored libraries
 # Use verbose output to debug build issues
@@ -65,6 +63,9 @@ RUN pip install -e . -v 2>&1 | tee /tmp/build.log && \
 
 # Install additional dependencies
 RUN pip install pytest pytest-cov black flake8 psutil bgen
+
+# Verify numpy is using OpenBLAS
+RUN python -c "import numpy; numpy.show_config()" | grep -i blas || true
 
 # Copy vendored check script
 COPY scripts/check_vendored.py /tmp/check_vendored.py

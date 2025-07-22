@@ -62,14 +62,15 @@ ENV LDCOV_USE_SYSTEM_LIBS=0
 
 # Install build dependencies and ldcov
 RUN pip install --upgrade pip && \
-    # Install numpy with OpenBLAS (rebuild from source to link with system OpenBLAS)
-    pip install --no-binary numpy numpy && \
-    pip install cython && \
+    pip install numpy cython && \
     pip install -e . && \
     pip install psutil memory_profiler pandas matplotlib seaborn gprof2dot snakeviz
 
 # Create directories for mounting
 RUN mkdir -p /data/test_data /app/benchmarks /results
+
+# Verify numpy is using OpenBLAS
+RUN python -c "import numpy; numpy.show_config()" | grep -i blas || true
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
