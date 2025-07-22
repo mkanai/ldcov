@@ -38,7 +38,7 @@ RUN if [ -d .git ]; then \
 
 # Enable SIMD optimizations (AVX2 + FMA for x86_64)
 ENV CFLAGS="-O3 -mfma -mavx -mavx2"
-ENV CXXFLAGS="-O3 -mfma -mavx -mavx2 -std=c++14"
+ENV CXXFLAGS="-O3 -mfma -mavx -mavx2 -std=c++17"
 
 # Ensure we don't use system libraries
 ENV LDCOV_USE_SYSTEM_LIBS=0
