@@ -15,6 +15,8 @@ RUN apt-get update && apt-get install -y \
     # Additional build tools that might be needed
     build-essential \
     ninja-build \
+    # OpenBLAS for optimized linear algebra operations
+    libopenblas-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install bgenix from Oxford
@@ -41,8 +43,10 @@ ENV CXXFLAGS="-O3 -mfma -mavx -mavx2 -std=c++14"
 # Ensure we don't use system libraries
 ENV LDCOV_USE_SYSTEM_LIBS=0
 
-# Pre-install build dependencies
-RUN pip install --upgrade pip setuptools wheel cmake ninja
+# Pre-install build dependencies and numpy with OpenBLAS
+RUN pip install --upgrade pip setuptools wheel cmake ninja && \
+    # Install numpy explicitly to ensure it uses OpenBLAS
+    pip install --no-binary numpy numpy
 
 # Build and install ldcov with vendored libraries
 # Use verbose output to debug build issues

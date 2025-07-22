@@ -43,6 +43,8 @@ RUN apt-get update && apt-get install -y \
     git \
     linux-perf \
     graphviz \
+    # OpenBLAS for optimized linear algebra operations
+    libopenblas-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the checked-out code from previous stage
@@ -60,7 +62,9 @@ ENV LDCOV_USE_SYSTEM_LIBS=0
 
 # Install build dependencies and ldcov
 RUN pip install --upgrade pip && \
-    pip install numpy cython && \
+    # Install numpy with OpenBLAS (rebuild from source to link with system OpenBLAS)
+    pip install --no-binary numpy numpy && \
+    pip install cython && \
     pip install -e . && \
     pip install psutil memory_profiler pandas matplotlib seaborn gprof2dot snakeviz
 
@@ -72,6 +76,7 @@ ENV PYTHONUNBUFFERED=1
 ENV OMP_NUM_THREADS=4
 ENV MKL_NUM_THREADS=4
 ENV NUMEXPR_NUM_THREADS=4
+ENV OPENBLAS_NUM_THREADS=4
 
 # Note about perf: Container needs to be run with --cap-add=SYS_ADMIN for perf to work
 # Example: docker run --cap-add=SYS_ADMIN -v $(pwd)/results:/results ldcov:benchmark
