@@ -1,20 +1,54 @@
-# Docker ignore file
-.git
-.github
-.pytest_cache
-__pycache__
+# Dockerignore for multi-stage benchmark builds
+# This allows .git directory to be included in the build context
+# so we can checkout specific commits
+
+# Exclude common unnecessary files
+__pycache__/
 *.pyc
 *.pyo
+*.pyd
+.Python
 *.so
-*.egg-info
-build/
+*.egg
+*.egg-info/
 dist/
-.coverage
-coverage.xml
-.docker-build-context/
-benchmarks/*.json
-benchmarks/*.log
-benchmarks/test_data/
-tests/data/
-reference_only/
+build/
 *.log
+.coverage
+.pytest_cache/
+.tox/
+.env
+.venv/
+venv/
+ENV/
+
+# Exclude build artifacts
+*.o
+*.a
+*.dylib
+*.dll
+*.exe
+
+# Exclude IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Exclude documentation builds
+docs/_build/
+docs/_static/
+docs/_templates/
+
+# Exclude test data and results
+benchmark_results/
+benchmark_results_*/
+benchmark_logs/
+test_data/large_*.bgen
+test_data/large_*.bgen.bgi
+*.bcor
+
+# DO NOT exclude .git - we need it for checking out commits
+# !.git/
