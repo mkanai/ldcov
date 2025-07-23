@@ -5,20 +5,11 @@ This module provides functions for computing correlation between genetic variant
 which can be used as a measure of linkage disequilibrium.
 """
 
-import numpy as np
-import pandas as pd
 from typing import Optional, List, Tuple
 import logging
 import os
 
-# Local compute imports
-from .covariate import regress_out_covariates, standardize_genotypes
-
-# IO imports
-from ..io import load_bgen
-from ..io.covariate_loader import load_covariates
-from ..io.correlation_io import save_correlation_matrix
-
+# Defer numpy/pandas imports until actually needed
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +66,10 @@ def load_and_adjust_genotypes(
         - means: Original means before standardization
         - norms: Original norms before standardization
     """
+    # Lazy import numpy and pandas
+    import numpy as np
+    import pandas as pd
+    
     # Load genotype data
     logger.info(f"Loading genotype data from BGEN file: {genotype_file}")
 
@@ -124,6 +119,9 @@ def load_and_adjust_genotypes(
         logger.info(f"Will load {len(samples_to_load)} samples from covariate file")
 
     # Load genotypes with sample filtering if applicable
+    # Lazy import load_bgen
+    from ..io import load_bgen
+    
     genotypes, variant_info, sample_ids = load_bgen(
         file_path=genotype_file,
         index_path=index_file,
@@ -137,6 +135,9 @@ def load_and_adjust_genotypes(
 
     # Standardize genotypes
     logger.info("Standardizing genotypes")
+    # Lazy import standardize_genotypes
+    from .covariate import standardize_genotypes
+    
     standardized_genotypes, means, norms = standardize_genotypes(
         genotypes, center=True, scale=True, inplace=True
     )
@@ -155,6 +156,9 @@ def load_and_adjust_genotypes(
             projection_data = load_projection_matrix(projection_matrix_file)
 
         logger.info("Adjusting genotypes using pre-computed projection matrix")
+        # Lazy import regress_out_covariates
+        from .covariate import regress_out_covariates
+        
         standardized_genotypes = regress_out_covariates(
             standardized_genotypes, projection_matrix_Q=projection_data.Q, inplace=True
         )
@@ -163,6 +167,9 @@ def load_and_adjust_genotypes(
         # Original workflow: load covariates and compute projection
         # Note: samples were already filtered during loading if covariate file was provided
         logger.info(f"Loading full covariates from {covariate_file}")
+        # Lazy import load_covariates
+        from ..io.covariate_loader import load_covariates
+        
         covariates = load_covariates(
             covariate_file, sample_ids, id_col=covariate_id_col, cols_to_use=covariate_cols
         )
@@ -175,6 +182,10 @@ def load_and_adjust_genotypes(
             )
 
         logger.info("Adjusting genotypes for covariates")
+        # Import regress_out_covariates if not already imported
+        if 'regress_out_covariates' not in locals():
+            from .covariate import regress_out_covariates
+        
         standardized_genotypes = regress_out_covariates(
             standardized_genotypes, covariates=covariates, inplace=True
         )
@@ -183,8 +194,8 @@ def load_and_adjust_genotypes(
 
 
 def compute_ld_from_standardized(
-    standardized_genotypes: np.ndarray,
-    variant_info: pd.DataFrame,
+    standardized_genotypes,
+    variant_info,
     output_file: str,
     output_format: str = "matrix",
 ) -> None:
@@ -202,10 +213,17 @@ def compute_ld_from_standardized(
     output_format : str
         Output format ("matrix", "long", "bcor")
     """
+    # Lazy imports
+    import numpy as np
+    import pandas as pd
+    
     logger.info("Computing LD matrix")
     corr_matrix = compute_correlation_matrix(standardized_genotypes)
 
     # Save to file
+    # Lazy import save_correlation_matrix
+    from ..io.correlation_io import save_correlation_matrix
+    
     save_correlation_matrix(
         corr_matrix, output_file, variant_info=variant_info, output_format=output_format
     )
@@ -213,7 +231,7 @@ def compute_ld_from_standardized(
     logger.info(f"LD matrix saved to {output_file}")
 
 
-def compute_correlation_matrix(standardized_genotypes: np.ndarray) -> np.ndarray:
+def compute_correlation_matrix(standardized_genotypes):
     """
     Compute correlation matrix from standardized genotype data.
 
@@ -228,6 +246,9 @@ def compute_correlation_matrix(standardized_genotypes: np.ndarray) -> np.ndarray
     numpy.ndarray
         Correlation matrix (variants x variants).
     """
+    # Lazy import numpy
+    import numpy as np
+    
     # Calculate correlations using dot product of standardized genotypes: t(X_scaled) %*% X_scaled
     corr_matrix = np.dot(standardized_genotypes.T, standardized_genotypes)
 

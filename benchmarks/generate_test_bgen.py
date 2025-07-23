@@ -159,70 +159,108 @@ def create_bgi_index(bgen_path):
         print("Error: bgenix not found. Please install bgenix or check the path.")
 
 
-def main():
-    """Generate test BGEN files with various configurations."""
-    output_dir = Path(__file__).parent / "test_data"
-    output_dir.mkdir(exist_ok=True)
+def get_test_configurations(mode="standard"):
+    """Get test configurations based on mode.
     
-    # Test configurations (using 8-bit as default)
-    configs = [
-        # Small files for quick testing
-        {"n_samples": 1000, "n_variants": 1000, "compression": "zlib", "bit_depth": 8},
-        {"n_samples": 1000, "n_variants": 5000, "compression": "zlib", "bit_depth": 8},
+    Args:
+        mode: One of 'quick', 'standard', 'comprehensive', 'compression', 'scaling'
+    
+    Returns:
+        List of configuration dictionaries
+    """
+    # Core test matrix - all 8-bit, zlib unless specified
+    core_configs = [
+        # Size scaling tests (square matrices)
+        {"name": "tiny", "n_samples": 500, "n_variants": 500, "compression": "zlib", "bit_depth": 8},
+        {"name": "small", "n_samples": 1000, "n_variants": 1000, "compression": "zlib", "bit_depth": 8},
+        {"name": "medium", "n_samples": 5000, "n_variants": 5000, "compression": "zlib", "bit_depth": 8},
+        {"name": "large", "n_samples": 10000, "n_variants": 10000, "compression": "zlib", "bit_depth": 8},
+        {"name": "xlarge", "n_samples": 50000, "n_variants": 10000, "compression": "zlib", "bit_depth": 8},
+        {"name": "xxlarge", "n_samples": 100000, "n_variants": 10000, "compression": "zlib", "bit_depth": 8},
         
-        # Medium files
-        {"n_samples": 5000, "n_variants": 5000, "compression": "zlib", "bit_depth": 8},
-        {"n_samples": 5000, "n_variants": 10000, "compression": "zlib", "bit_depth": 8},
-        
-        # Large files for performance testing
-        {"n_samples": 10000, "n_variants": 10000, "compression": "zlib", "bit_depth": 8},
-        {"n_samples": 10000, "n_variants": 20000, "compression": "zlib", "bit_depth": 8},
-        
-        # Very large file (50K samples)
-        {"n_samples": 50000, "n_variants": 10000, "compression": "zlib", "bit_depth": 8},
-        
-        # Different compression types (all 8-bit)
-        {"n_samples": 5000, "n_variants": 5000, "compression": None, "bit_depth": 8},  # No compression
-        
-        # Different bit depths for comparison
-        {"n_samples": 5000, "n_variants": 5000, "compression": "zlib", "bit_depth": 16},  # Higher precision
-        {"n_samples": 5000, "n_variants": 5000, "compression": "zlib", "bit_depth": 32},  # Highest precision
+        # Shape tests (sample vs variant ratio)
+        {"name": "wide", "n_samples": 10000, "n_variants": 5000, "compression": "zlib", "bit_depth": 8},
+        {"name": "tall", "n_samples": 5000, "n_variants": 10000, "compression": "zlib", "bit_depth": 8},
+        {"name": "extreme_wide", "n_samples": 20000, "n_variants": 2000, "compression": "zlib", "bit_depth": 8},
+        {"name": "extreme_tall", "n_samples": 2000, "n_variants": 20000, "compression": "zlib", "bit_depth": 8},
     ]
     
-    # Add uncompressed tests with different sample sizes for thorough testing
-    configs.extend([
-        {"n_samples": 1000, "n_variants": 5000, "compression": None, "bit_depth": 8},   # Small uncompressed
-        {"n_samples": 2500, "n_variants": 5000, "compression": None, "bit_depth": 8},   # Small-Medium uncompressed
-        {"n_samples": 10000, "n_variants": 5000, "compression": None, "bit_depth": 8},  # Large uncompressed
-        {"n_samples": 15000, "n_variants": 5000, "compression": None, "bit_depth": 8},  # Very Large uncompressed
-        # Additional size test for break-even analysis
-        {"n_samples": 7500, "n_variants": 5000, "compression": None, "bit_depth": 8},   # Medium-Large uncompressed
-    ])
+    # Compression impact tests (fixed 5K×5K)
+    compression_configs = [
+        {"name": "medium_nocomp", "n_samples": 5000, "n_variants": 5000, "compression": None, "bit_depth": 8},
+        {"name": "medium_zstd", "n_samples": 5000, "n_variants": 5000, "use_zstd": True, "bit_depth": 8},
+        {"name": "medium_16bit", "n_samples": 5000, "n_variants": 5000, "compression": "zlib", "bit_depth": 16},
+        {"name": "medium_32bit", "n_samples": 5000, "n_variants": 5000, "compression": "zlib", "bit_depth": 32},
+    ]
     
-    # Add zstd compression tests with different sample sizes if supported
-    try:
-        import zstandard
-        # Test zstd with various sample sizes to see how it scales
-        configs.extend([
-            {"n_samples": 1000, "n_variants": 5000, "use_zstd": True, "bit_depth": 8},   # Small
-            {"n_samples": 5000, "n_variants": 5000, "use_zstd": True, "bit_depth": 8},   # Medium
-            {"n_samples": 10000, "n_variants": 5000, "use_zstd": True, "bit_depth": 8},  # Large
-            {"n_samples": 25000, "n_variants": 5000, "use_zstd": True, "bit_depth": 8},  # Very Large
-            {"n_samples": 50000, "n_variants": 5000, "use_zstd": True, "bit_depth": 8},  # Extra Large
-        ])
-    except ImportError:
-        print("Note: zstandard not available, skipping zstd compression tests")
+    # Scaling analysis configs
+    scaling_configs = [
+        # Sample scaling (fixed 5K variants)
+        {"name": "scale_1k", "n_samples": 1000, "n_variants": 5000, "compression": "zlib", "bit_depth": 8},
+        {"name": "scale_2k", "n_samples": 2000, "n_variants": 5000, "compression": "zlib", "bit_depth": 8},
+        {"name": "scale_5k", "n_samples": 5000, "n_variants": 5000, "compression": "zlib", "bit_depth": 8},
+        {"name": "scale_10k", "n_samples": 10000, "n_variants": 5000, "compression": "zlib", "bit_depth": 8},
+        {"name": "scale_20k", "n_samples": 20000, "n_variants": 5000, "compression": "zlib", "bit_depth": 8},
+        
+        # Variant scaling (fixed 5K samples)
+        {"name": "vscale_1k", "n_samples": 5000, "n_variants": 1000, "compression": "zlib", "bit_depth": 8},
+        {"name": "vscale_2k", "n_samples": 5000, "n_variants": 2000, "compression": "zlib", "bit_depth": 8},
+        {"name": "vscale_5k", "n_samples": 5000, "n_variants": 5000, "compression": "zlib", "bit_depth": 8},
+        {"name": "vscale_10k", "n_samples": 5000, "n_variants": 10000, "compression": "zlib", "bit_depth": 8},
+        {"name": "vscale_20k", "n_samples": 5000, "n_variants": 20000, "compression": "zlib", "bit_depth": 8},
+    ]
+    
+    # Select configurations based on mode
+    if mode == "quick":
+        # Only tiny, small, and medium for quick testing
+        configs = [c for c in core_configs if c["name"] in ["tiny", "small", "medium"]]
+    elif mode == "standard":
+        # Core test matrix without extreme cases
+        configs = [c for c in core_configs if not c["name"].startswith("extreme")]
+    elif mode == "compression":
+        # Medium size with all compression variants
+        configs = [c for c in core_configs if c["name"] == "medium"] + compression_configs
+    elif mode == "scaling":
+        # All scaling tests
+        configs = scaling_configs
+    elif mode == "comprehensive":
+        # Everything
+        configs = core_configs + compression_configs + scaling_configs
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+    
+    return configs
+
+
+def main():
+    """Generate test BGEN files with various configurations."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Generate test BGEN files for benchmarking")
+    parser.add_argument("--mode", choices=["quick", "standard", "comprehensive", "compression", "scaling"],
+                        default="standard", help="Test generation mode")
+    parser.add_argument("--output-dir", type=Path, default=None,
+                        help="Output directory (default: benchmarks/test_data)")
+    args = parser.parse_args()
+    
+    output_dir = args.output_dir or Path(__file__).parent / "test_data"
+    output_dir.mkdir(exist_ok=True)
+    
+    # Get configurations based on mode
+    configs = get_test_configurations(args.mode)
     
     print(f"Generating {len(configs)} test BGEN files in {output_dir}\n")
+    print(f"Mode: {args.mode}")
     
     for i, config in enumerate(configs, 1):
-        print(f"\n[{i}/{len(configs)}] Configuration:")
+        config_name = config.get("name", "unnamed")
+        print(f"\n[{i}/{len(configs)}] Configuration: {config_name}")
         
         # Generate filename
         n_samples = config["n_samples"]
         n_variants = config["n_variants"]
         compression = config.get("compression", "zlib")
-        bit_depth = config.get("bit_depth", 16)
+        bit_depth = config.get("bit_depth", 8)
         use_zstd = config.get("use_zstd", False)
         
         if use_zstd:
@@ -237,7 +275,9 @@ def main():
         
         # Create BGEN file
         try:
-            create_bgen_file(output_path, **config)
+            # Remove 'name' from config before passing to create_bgen_file
+            file_config = {k: v for k, v in config.items() if k != 'name'}
+            create_bgen_file(output_path, **file_config)
             
             # Create BGI index
             create_bgi_index(output_path)

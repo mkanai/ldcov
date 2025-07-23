@@ -23,32 +23,103 @@ import cProfile
 import pstats
 import io
 
-# Test configurations
-TEST_CONFIGS = [
-    # (samples, variants, compression, bits, name)
-    (1000, 1000, "zlib", 8, "small"),
-    (5000, 5000, "zlib", 8, "medium"),
-    (10000, 10000, "zlib", 8, "large"),
-    (100000, 10000, "zlib", 8, "extra_large"),
-    (5000, 5000, "nocomp", 8, "medium_nocomp"),
-    (10000, 5000, "zlib", 8, "wide"),
-    (5000, 10000, "zlib", 8, "tall"),
+def get_test_configurations(mode="standard"):
+    """Get test configurations based on mode.
+    
+    Args:
+        mode: One of 'quick', 'standard', 'comprehensive', 'compression', 'scaling'
+    
+    Returns:
+        List of (samples, variants, compression, bits, name) tuples
+    """
+    # Core test matrix - all 8-bit, zlib unless specified
+    core_configs = [
+        # Size scaling tests (square matrices)
+        (500, 500, "zlib", 8, "tiny"),
+        (1000, 1000, "zlib", 8, "small"),
+        (5000, 5000, "zlib", 8, "medium"),
+        (10000, 10000, "zlib", 8, "large"),
+        (50000, 10000, "zlib", 8, "xlarge"),
+        (100000, 10000, "zlib", 8, "xxlarge"),
+        
+        # Shape tests (sample vs variant ratio)
+        (10000, 5000, "zlib", 8, "wide"),
+        (5000, 10000, "zlib", 8, "tall"),
+        (20000, 2000, "zlib", 8, "extreme_wide"),
+        (2000, 20000, "zlib", 8, "extreme_tall"),
+    ]
+    
+    # Compression impact tests (fixed 5K×5K)
+    compression_configs = [
+        (5000, 5000, "nocomp", 8, "medium_nocomp"),
+        (5000, 5000, "zstd", 8, "medium_zstd"),
+        (5000, 5000, "zlib", 16, "medium_16bit"),
+        (5000, 5000, "zlib", 32, "medium_32bit"),
+    ]
+    
+    # Scaling analysis configs
+    scaling_configs = [
+        # Sample scaling (fixed 5K variants)
+        (1000, 5000, "zlib", 8, "scale_1k"),
+        (2000, 5000, "zlib", 8, "scale_2k"),
+        (5000, 5000, "zlib", 8, "scale_5k"),
+        (10000, 5000, "zlib", 8, "scale_10k"),
+        (20000, 5000, "zlib", 8, "scale_20k"),
+        
+        # Variant scaling (fixed 5K samples)
+        (5000, 1000, "zlib", 8, "vscale_1k"),
+        (5000, 2000, "zlib", 8, "vscale_2k"),
+        (5000, 5000, "zlib", 8, "vscale_5k"),
+        (5000, 10000, "zlib", 8, "vscale_10k"),
+        (5000, 20000, "zlib", 8, "vscale_20k"),
+    ]
+    
+    # Select configurations based on mode
+    if mode == "quick":
+        # Only tiny, small, and medium for quick testing
+        configs = [c for c in core_configs if c[4] in ["tiny", "small", "medium"]]
+    elif mode == "standard":
+        # Core test matrix without extreme cases
+        configs = [c for c in core_configs if not c[4].startswith("extreme")]
+    elif mode == "compression":
+        # Medium size with all compression variants
+        configs = [c for c in core_configs if c[4] == "medium"] + compression_configs
+    elif mode == "scaling":
+        # All scaling tests
+        configs = scaling_configs
+    elif mode == "comprehensive":
+        # Everything
+        configs = core_configs + compression_configs + scaling_configs
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+    
+    return configs
+
+# Default workflows with configurable region sizes
+WORKFLOWS = [
+    "precompute_projection",  # Need this to create projection matrix first
+    "standard_workflow",  # The standard ldcov workflow with projection and z-file
 ]
 
-WORKFLOWS = [
-    "standard_workflow",  # The standard ldcov workflow with projection and z-file (50% region)
-    "precompute_projection",  # Need this to create projection matrix first
-]
+# Region proportion options
+REGION_PROPORTIONS = {
+    "small": 0.1,    # 10% of variants
+    "medium": 0.5,   # 50% of variants (default)
+    "large": 0.9,    # 90% of variants
+}
 
 
 class BenchmarkRunner:
-    def __init__(self, data_dir="/data/test_data", output_dir="/results", num_runs=3, profile=False):
+    def __init__(self, data_dir="/data/test_data", output_dir="/results", num_runs=3, 
+                 profile=False, mode="standard", region_size="medium"):
         self.data_dir = Path(data_dir)
         self.output_dir = Path(output_dir)
         self.num_runs = num_runs
         self.commit = os.environ.get("GIT_COMMIT", "unknown")
         self.process = psutil.Process()
         self.profile = profile
+        self.mode = mode
+        self.region_proportion = REGION_PROPORTIONS.get(region_size, 0.5)
         
         # Create temp directory for outputs
         self.temp_dir = Path(tempfile.mkdtemp())
@@ -377,9 +448,9 @@ class BenchmarkRunner:
             if not proj_file.exists():
                 return {"name": "standard_workflow", "error": "Failed to create projection matrix"}
         
-        # Create z-file for variant filtering (50% of variants in a contiguous region)
+        # Create z-file for variant filtering with configured proportion
         z_file = self.temp_dir / "variants.z"
-        region_start, region_end = self.create_z_file(num_variants, z_file, proportion=0.5)
+        region_start, region_end = self.create_z_file(num_variants, z_file, proportion=self.region_proportion)
         
         # Get BGI file path
         bgi_file = Path(str(bgen_file) + ".bgi")
@@ -418,6 +489,8 @@ class BenchmarkRunner:
             "commit": self.commit,
             "timestamp": datetime.now().isoformat(),
             "system": self.get_system_info(),
+            "mode": self.mode,
+            "region_proportion": self.region_proportion,
             "benchmarks": []
         }
         
@@ -426,7 +499,10 @@ class BenchmarkRunner:
         if commit_info_file.exists():
             results["commit_info"] = commit_info_file.read_text().strip()
         
-        for samples, variants, compression, bits, config_name in TEST_CONFIGS:
+        # Get configurations based on mode
+        test_configs = get_test_configurations(self.mode)
+        
+        for samples, variants, compression, bits, config_name in test_configs:
             print(f"\nRunning benchmarks for {config_name} ({samples}s × {variants}v {compression} {bits}bit)")
             
             # Find test files
@@ -470,8 +546,8 @@ class BenchmarkRunner:
                 std_result = config_results["workflows"]["standard_workflow"]
                 if "aggregate" in std_result and "median_time" in std_result["aggregate"]:
                     median_time = std_result["aggregate"]["median_time"]
-                    # Note: using half the variants since z-file filters 50%
-                    effective_variants = variants * 0.5
+                    # Note: using region proportion to calculate effective variants
+                    effective_variants = variants * self.region_proportion
                     config_results["derived_metrics"] = {
                         "variants_per_second": effective_variants / median_time if median_time > 0 else 0,
                         "mb_per_second": config_results["file_size_mb"] / median_time if median_time > 0 else 0,
@@ -523,10 +599,15 @@ def main():
                         help="Number of runs per benchmark")
     parser.add_argument("--profile", action="store_true",
                         help="Enable profiling mode (Python cProfile + perf). Note: This will slow down execution and only run once")
+    parser.add_argument("--mode", choices=["quick", "standard", "comprehensive", "compression", "scaling"],
+                        default="standard", help="Benchmark mode (default: standard)")
+    parser.add_argument("--region-size", choices=["small", "medium", "large"],
+                        default="medium", help="Region size for variant selection (default: medium=50%%)")
     args = parser.parse_args()
     
-    mode = "profiling" if args.profile else "benchmarking"
-    print(f"Running ldcov {mode} for commit: {os.environ.get('GIT_COMMIT', 'unknown')}")
+    profiling_mode = "profiling" if args.profile else "benchmarking"
+    print(f"Running ldcov {profiling_mode} for commit: {os.environ.get('GIT_COMMIT', 'unknown')}")
+    print(f"Mode: {args.mode}, Region size: {args.region_size} ({REGION_PROPORTIONS[args.region_size]*100:.0f}%)")
     
     if args.profile:
         print("Note: Profiling mode enabled. Only one run will be performed per benchmark.")
@@ -536,7 +617,9 @@ def main():
         data_dir=args.data_dir,
         output_dir=args.output_dir,
         num_runs=args.num_runs,
-        profile=args.profile
+        profile=args.profile,
+        mode=args.mode,
+        region_size=args.region_size
     )
     
     results = runner.run_benchmark()
@@ -546,14 +629,20 @@ def main():
     print("\n=== Benchmark Summary ===")
     print(f"Commit: {results['commit']}")
     print(f"Timestamp: {results['timestamp']}")
+    print(f"Mode: {results['mode']}")
+    print(f"Region proportion: {results['region_proportion']*100:.0f}%")
     print(f"Total configurations: {len(results['benchmarks'])}")
     
     # Print performance summary
+    print("\nPerformance Results:")
     for config in results['benchmarks']:
-        print(f"\n{config['config']}:")
+        print(f"\n{config['config']} ({config['samples']}×{config['variants']}):")
         for workflow, result in config['workflows'].items():
             if "aggregate" in result and "median_time" in result["aggregate"]:
                 print(f"  {workflow}: {result['aggregate']['median_time']:.2f}s")
+        if "derived_metrics" in config:
+            print(f"  Throughput: {config['derived_metrics']['variants_per_second']:.0f} var/s, "
+                  f"{config['derived_metrics']['mb_per_second']:.1f} MB/s")
 
 
 if __name__ == "__main__":
