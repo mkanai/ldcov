@@ -36,7 +36,7 @@ TEST_CONFIGS = [
 ]
 
 WORKFLOWS = [
-    "standard_workflow",  # The standard ldcov workflow with projection and z-file
+    "standard_workflow",  # The standard ldcov workflow with projection and z-file (50% region)
     "precompute_projection",  # Need this to create projection matrix first
 ]
 
@@ -97,57 +97,54 @@ class BenchmarkRunner:
                 values = [sample_id, sample_id] + [f"{x:.6f}" for x in pcs] + [f"{age:.1f}", str(sex)]
                 f.write("\t".join(values) + "\n")
     
-    def create_z_file(self, num_variants, output_file, proportion=0.5):
-        """Create a z-file with variant IDs for filtering - using regional selection."""
+    def create_z_file(self, num_variants, output_file, proportion=0.5, region_start=None):
+        """Create a z-file with variant IDs for filtering - using regional selection.
+        
+        This simulates real-world genomic region queries where users query
+        contiguous genomic regions (e.g., a gene, locus, or linkage region).
+        
+        Args:
+            num_variants: Total number of variants in the BGEN file
+            output_file: Path to output z-file
+            proportion: Proportion of variants to select (default 0.5)
+            region_start: Optional starting position for the region (for reproducibility)
+        """
         # Calculate number of variants to select
         target_count = int(num_variants * proportion)
         
-        # For regional selection, we'll select consecutive variants
-        # This simulates querying a genomic region (e.g., a gene or locus)
-        np.random.seed(42)
+        if region_start is None:
+            # Randomly select a starting position for the region
+            # This simulates querying different genomic regions
+            np.random.seed(42)  # For reproducibility
+            max_start = num_variants - target_count
+            if max_start <= 0:
+                region_start = 0
+            else:
+                region_start = np.random.randint(0, max_start + 1)
         
-        # Determine the size of the region to select
-        # If we need to select 50% of variants, create one contiguous region
-        region_size = target_count
-        
-        # Select a random starting position for the region
-        # Ensure we don't go past the end of the file
-        max_start = num_variants - region_size + 1
-        if max_start <= 0:
-            max_start = 1
-        start_idx = np.random.randint(0, max_start)
-        end_idx = start_idx + region_size
-        
-        # Create consecutive indices for regional selection
-        selected_indices = list(range(start_idx, end_idx))
-        
-        # For test data, we need to know the actual chromosome for each variant
-        # The test data has 46 variants per chromosome, cycling through chromosomes
-        variants_per_chrom = 46  # Approximate, varies slightly
+        # Select consecutive variants to simulate a genomic region
+        region_end = region_start + target_count
         
         with open(output_file, 'w') as f:
             # Write header - NOTE: must match column names expected by variant filter
             f.write("rsid\tchromosome\tposition\tallele1\tallele2\n")
             
-            for idx in selected_indices:
+            for idx in range(region_start, region_end):
                 # Create variant info matching test data format
                 # Test data uses rs1000000, rs1000001, etc.
                 rsid = f"rs{1000000 + idx}"
                 
-                # Calculate which chromosome this variant is on
-                # Test data cycles through chromosomes with ~46 variants each
-                chrom_num = (idx // variants_per_chrom) + 1
-                if chrom_num > 22:
-                    chrom_num = 22  # Cap at chr22
-                chrom = f"chr{chrom_num}"
+                # All variants are on chr1 (as per updated generate_test_bgen.py)
+                chrom = "chr1"
                 
-                # Position within chromosome (resets for each chromosome)
-                pos_in_chrom = (idx % variants_per_chrom) + 1
-                pos = pos_in_chrom * 1000
+                # Position based on variant index (1kb spacing)
+                pos = (idx + 1) * 1000
                 
                 allele1 = "A"
                 allele2 = "G"
                 f.write(f"{rsid}\t{chrom}\t{pos}\t{allele1}\t{allele2}\n")
+        
+        return region_start, region_end
     
     def _run_with_profiling(self, cmd, name):
         """Run command with profiling enabled."""
@@ -382,7 +379,7 @@ class BenchmarkRunner:
         
         # Create z-file for variant filtering (50% of variants in a contiguous region)
         z_file = self.temp_dir / "variants.z"
-        self.create_z_file(num_variants, z_file, proportion=0.5)
+        region_start, region_end = self.create_z_file(num_variants, z_file, proportion=0.5)
         
         # Get BGI file path
         bgi_file = Path(str(bgen_file) + ".bgi")
@@ -400,7 +397,20 @@ class BenchmarkRunner:
             "--nan-action", "mean",
             "--out", str(output_prefix)
         ]
-        return self.measure_command(cmd, "standard_workflow")
+        
+        result = self.measure_command(cmd, "standard_workflow")
+        
+        # Add region information to the result
+        result["region_info"] = {
+            "start_variant": region_start,
+            "end_variant": region_end,
+            "num_variants": region_end - region_start,
+            "start_position": (region_start + 1) * 1000,
+            "end_position": region_end * 1000,
+            "chromosome": "chr1"
+        }
+        
+        return result
     
     def run_benchmark(self):
         """Run all benchmarks."""
