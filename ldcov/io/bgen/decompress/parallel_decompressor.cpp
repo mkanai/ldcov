@@ -45,8 +45,8 @@ bool ParallelDecompressor::TaskQueue::pop(DecompressionTask& task) {
     return true;
 }
 
-bool ParallelDecompressor::TaskQueue::pop_with_timeout(
-    DecompressionTask& task, std::chrono::milliseconds timeout) {
+bool ParallelDecompressor::TaskQueue::pop_with_timeout(DecompressionTask& task,
+                                                       std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lock(mutex_);
     bool got_item = cv_.wait_for(lock, timeout, [this] { return !queue_.empty() || shutdown_; });
 
@@ -89,12 +89,12 @@ void ParallelDecompressor::ResultCollector::add_result(size_t task_id, Decompres
 
     // Direct placement into vector at task_id index (O(1) operation)
     if (task_id < results_.size()) {
-        results_[task_id] = std::unique_ptr<DecompressedData>(
-            new DecompressedData(std::move(result)));
+        results_[task_id] =
+            std::unique_ptr<DecompressedData>(new DecompressedData(std::move(result)));
     } else {
         // This should not happen if properly initialized
-        throw std::runtime_error("Task ID " + std::to_string(task_id) + 
-                                 " exceeds batch size " + std::to_string(results_.size()));
+        throw std::runtime_error("Task ID " + std::to_string(task_id) + " exceeds batch size " +
+                                 std::to_string(results_.size()));
     }
 
     // Check if we can move any results to ready queue
@@ -277,13 +277,13 @@ std::vector<DecompressedData> ParallelDecompressor::decompress_batch(
     // Process tasks until all results are collected
     size_t results_needed = variants.size();
     size_t results_collected = 0;
-    
+
     // Create a main thread state for decompression
     WorkerState main_state;
     main_state.thread_id = static_cast<size_t>(-1);  // Special ID for main thread
     main_state.buffer_manager = std::move(main_buffer_manager_);
     main_state.io_buffer = std::unique_ptr<uint8_t[]>(new uint8_t[parallel_config_.io_buffer_size]);
-    
+
     try {
         while (results_collected < results_needed) {
             // Try to get a task from the queue with a short timeout
@@ -292,7 +292,7 @@ std::vector<DecompressedData> ParallelDecompressor::decompress_batch(
                 // Process the task
                 process_single_task(task, &main_state);
             }
-            
+
             // Check how many results are ready
             results_collected = result_collector_.ready_count();
         }
@@ -301,16 +301,15 @@ std::vector<DecompressedData> ParallelDecompressor::decompress_batch(
         main_buffer_manager_ = std::move(main_state.buffer_manager);
         throw;
     }
-    
+
     // Restore main_buffer_manager_
     main_buffer_manager_ = std::move(main_state.buffer_manager);
-    
+
     // Collect results in order
     return result_collector_.collect_results(variants.size());
 }
 
-void ParallelDecompressor::process_single_task(const DecompressionTask& task,
-                                               WorkerState* state) {
+void ParallelDecompressor::process_single_task(const DecompressionTask& task, WorkerState* state) {
     auto start = std::chrono::high_resolution_clock::now();
 
     // Decompress the variant

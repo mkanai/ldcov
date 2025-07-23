@@ -281,7 +281,7 @@ void compute_dosages_32bit_simd(const uint8_t* prob_data, float* output, size_t 
     if (g_has_avx2) {
         // Process 4 samples at a time with AVX2
         const double scale = 1.0 / 4294967295.0;
-        
+
         for (; i + 3 < n_samples; i += 4) {
             // Load P(AA) and P(AB) for 4 samples
             uint64_t prob_aa[4], prob_ab[4];
@@ -718,40 +718,25 @@ void compute_dosages_v11_simd(const uint8_t* buffer, size_t n_samples, float* ou
         for (; i + 7 < n_samples; i += 8) {
             // Load 48 bytes (8 samples × 6 bytes)
             // Each sample has 3 uint16_t values: prob_aa, prob_ab, prob_bb
-            
+
             // Gather P(AA) and P(AB) values for 8 samples
-            __m256i prob_aa = _mm256_set_epi32(
-                read_le16(buffer + (i + 7) * 6),
-                read_le16(buffer + (i + 6) * 6),
-                read_le16(buffer + (i + 5) * 6),
-                read_le16(buffer + (i + 4) * 6),
-                read_le16(buffer + (i + 3) * 6),
-                read_le16(buffer + (i + 2) * 6),
-                read_le16(buffer + (i + 1) * 6),
-                read_le16(buffer + (i + 0) * 6)
-            );
+            __m256i prob_aa =
+                _mm256_set_epi32(read_le16(buffer + (i + 7) * 6), read_le16(buffer + (i + 6) * 6),
+                                 read_le16(buffer + (i + 5) * 6), read_le16(buffer + (i + 4) * 6),
+                                 read_le16(buffer + (i + 3) * 6), read_le16(buffer + (i + 2) * 6),
+                                 read_le16(buffer + (i + 1) * 6), read_le16(buffer + (i + 0) * 6));
 
             __m256i prob_ab = _mm256_set_epi32(
-                read_le16(buffer + (i + 7) * 6 + 2),
-                read_le16(buffer + (i + 6) * 6 + 2),
-                read_le16(buffer + (i + 5) * 6 + 2),
-                read_le16(buffer + (i + 4) * 6 + 2),
-                read_le16(buffer + (i + 3) * 6 + 2),
-                read_le16(buffer + (i + 2) * 6 + 2),
-                read_le16(buffer + (i + 1) * 6 + 2),
-                read_le16(buffer + (i + 0) * 6 + 2)
-            );
+                read_le16(buffer + (i + 7) * 6 + 2), read_le16(buffer + (i + 6) * 6 + 2),
+                read_le16(buffer + (i + 5) * 6 + 2), read_le16(buffer + (i + 4) * 6 + 2),
+                read_le16(buffer + (i + 3) * 6 + 2), read_le16(buffer + (i + 2) * 6 + 2),
+                read_le16(buffer + (i + 1) * 6 + 2), read_le16(buffer + (i + 0) * 6 + 2));
 
             __m256i prob_bb = _mm256_set_epi32(
-                read_le16(buffer + (i + 7) * 6 + 4),
-                read_le16(buffer + (i + 6) * 6 + 4),
-                read_le16(buffer + (i + 5) * 6 + 4),
-                read_le16(buffer + (i + 4) * 6 + 4),
-                read_le16(buffer + (i + 3) * 6 + 4),
-                read_le16(buffer + (i + 2) * 6 + 4),
-                read_le16(buffer + (i + 1) * 6 + 4),
-                read_le16(buffer + (i + 0) * 6 + 4)
-            );
+                read_le16(buffer + (i + 7) * 6 + 4), read_le16(buffer + (i + 6) * 6 + 4),
+                read_le16(buffer + (i + 5) * 6 + 4), read_le16(buffer + (i + 4) * 6 + 4),
+                read_le16(buffer + (i + 3) * 6 + 4), read_le16(buffer + (i + 2) * 6 + 4),
+                read_le16(buffer + (i + 1) * 6 + 4), read_le16(buffer + (i + 0) * 6 + 4));
 
             // Check for missing data (all probabilities == 0)
             __m256i sum_check = _mm256_or_si256(_mm256_or_si256(prob_aa, prob_ab), prob_bb);
@@ -782,26 +767,16 @@ void compute_dosages_v11_simd(const uint8_t* buffer, size_t n_samples, float* ou
 
         for (; i + 3 < n_samples; i += 4) {
             // Load P(AA), P(AB), and P(BB) for 4 samples
-            uint16x4_t prob_aa = {
-                read_le16(buffer + (i + 0) * 6),
-                read_le16(buffer + (i + 1) * 6),
-                read_le16(buffer + (i + 2) * 6),
-                read_le16(buffer + (i + 3) * 6)
-            };
+            uint16x4_t prob_aa = {read_le16(buffer + (i + 0) * 6), read_le16(buffer + (i + 1) * 6),
+                                  read_le16(buffer + (i + 2) * 6), read_le16(buffer + (i + 3) * 6)};
 
             uint16x4_t prob_ab = {
-                read_le16(buffer + (i + 0) * 6 + 2),
-                read_le16(buffer + (i + 1) * 6 + 2),
-                read_le16(buffer + (i + 2) * 6 + 2),
-                read_le16(buffer + (i + 3) * 6 + 2)
-            };
+                read_le16(buffer + (i + 0) * 6 + 2), read_le16(buffer + (i + 1) * 6 + 2),
+                read_le16(buffer + (i + 2) * 6 + 2), read_le16(buffer + (i + 3) * 6 + 2)};
 
             uint16x4_t prob_bb = {
-                read_le16(buffer + (i + 0) * 6 + 4),
-                read_le16(buffer + (i + 1) * 6 + 4),
-                read_le16(buffer + (i + 2) * 6 + 4),
-                read_le16(buffer + (i + 3) * 6 + 4)
-            };
+                read_le16(buffer + (i + 0) * 6 + 4), read_le16(buffer + (i + 1) * 6 + 4),
+                read_le16(buffer + (i + 2) * 6 + 4), read_le16(buffer + (i + 3) * 6 + 4)};
 
             // Check for missing data
             uint16x4_t sum_check = vorr_u16(vorr_u16(prob_aa, prob_ab), prob_bb);

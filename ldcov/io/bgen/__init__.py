@@ -26,8 +26,9 @@ def _create_progress_callback(show_progress: bool, total: int, desc: str = "Load
 
     # Lazy import tqdm only when needed
     from tqdm import tqdm
+
     pbar = tqdm(total=total, desc=desc, unit="variants")
-    
+
     # Update every 100 variants or at least every 1%
     update_freq = min(100, max(1, total // 100))
 
@@ -46,7 +47,7 @@ def _validate_dosages(dosages) -> None:
     """Validate dosage values are within expected range."""
     # Lazy import numpy
     import numpy as np
-    
+
     # Check for out-of-range dosage values
     min_dosage = np.nanmin(dosages)
     max_dosage = np.nanmax(dosages)
@@ -111,11 +112,11 @@ def load_bgen(
     # Lazy import heavy modules
     import numpy as np
     import pandas as pd
-    
+
     # Set default dtype if not provided
     if dtype is None:
         dtype = np.float64
-    
+
     # Check BGEN file exists (skip for GCS paths)
     if not file_path.startswith("gs://") and not os.path.exists(file_path):
         raise FileNotFoundError(f"BGEN file not found: {file_path}")

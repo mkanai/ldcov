@@ -363,7 +363,7 @@ void GenotypeParser::computeDosagesV12Direct(const uint8_t* buffer, size_t size,
 
     // Save pointer to missing data for single-pass processing
     const uint8_t* missing_data_ptr = ptr;
-    
+
     // Skip missing data section
     ptr += n_samples;
 
@@ -380,12 +380,12 @@ void GenotypeParser::computeDosagesV12Direct(const uint8_t* buffer, size_t size,
 
     // Single-pass processing: read missing status and probabilities together
     const uint8_t* prob_ptr = ptr;
-    
+
     for (uint32_t i = 0; i < n_samples; ++i) {
         // Read missing status for this sample
         uint8_t ploidy_missing = missing_data_ptr[i];
         bool is_missing = (ploidy_missing & 0x80) != 0;
-        
+
         if (is_missing) {
             // Sample is missing - output NaN
             output[i] = std::nanf("");
@@ -395,7 +395,7 @@ void GenotypeParser::computeDosagesV12Direct(const uint8_t* buffer, size_t size,
                 prob_ptr += 2;  // Skip 2 bytes (prob_aa, prob_ab)
             } else if (bits_per_prob == 16) {
                 prob_ptr += 4;  // Skip 4 bytes (2 x uint16_t)
-            } else {       // 32 bits
+            } else {            // 32 bits
                 prob_ptr += 8;  // Skip 8 bytes (2 x uint32_t)
             }
         } else {

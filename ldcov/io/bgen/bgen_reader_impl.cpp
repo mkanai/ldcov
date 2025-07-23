@@ -208,7 +208,7 @@ class MMapFileReader : public FileReader {
 
         // Ensure we don't go past the end of the file
         size_t actual_length = std::min(length, static_cast<size_t>(file_size_ - offset));
-        
+
         // Call madvise on the specified region
         // Note: madvise requires page-aligned addresses, but it's OK to pass
         // unaligned addresses - the kernel will handle the alignment
@@ -331,7 +331,8 @@ class BgenReaderImpl::Impl {
     }
 
     // Read multiple variant metadata in batch (optimized)
-    std::vector<VariantMetadata> read_variants_metadata_batch(const std::vector<uint64_t>& offsets) {
+    std::vector<VariantMetadata> read_variants_metadata_batch(
+        const std::vector<uint64_t>& offsets) {
         if (!is_open_) {
             throw std::runtime_error("BGEN file is not open");
         }
@@ -369,12 +370,12 @@ class BgenReaderImpl::Impl {
         // Process variants in sorted order
         for (size_t idx = 0; idx < sorted_offsets.size(); ++idx) {
             const auto& [offset, original_idx] = sorted_offsets[idx];
-            
+
             // Check if we need to read more data
             if (offset < buffer_start_offset || offset >= buffer_end_offset) {
                 // Advise kernel to prefetch the data we're about to read
                 file_reader_->advise(offset, buffer_size, MADV_WILLNEED);
-                
+
                 // Also prefetch the next chunk if there are more variants
                 if (idx + 1 < sorted_offsets.size()) {
                     uint64_t next_offset = sorted_offsets[idx + 1].first;
@@ -383,14 +384,14 @@ class BgenReaderImpl::Impl {
                         file_reader_->advise(next_offset, buffer_size, MADV_WILLNEED);
                     }
                 }
-                
+
                 // Read new chunk starting at this offset
                 buffer_start_offset = offset;
                 file_reader_->seek(offset);
                 buffer_valid_bytes = file_reader_->read(buffer.data(), buffer_size);
                 if (buffer_valid_bytes == 0) {
-                    throw std::runtime_error("Failed to read variant at offset " + 
-                                           std::to_string(offset));
+                    throw std::runtime_error("Failed to read variant at offset " +
+                                             std::to_string(offset));
                 }
                 buffer_end_offset = buffer_start_offset + buffer_valid_bytes;
             }
@@ -405,8 +406,9 @@ class BgenReaderImpl::Impl {
             size_t available_bytes = buffer_valid_bytes - buffer_pos;
 
             // Parse variant metadata from buffer
-            auto parse_result = VariantParser::parse(buffer.data() + buffer_pos, available_bytes,
-                                                   layout_type, compression_type, header_.nsamples);
+            auto parse_result =
+                VariantParser::parse(buffer.data() + buffer_pos, available_bytes, layout_type,
+                                     compression_type, header_.nsamples);
             VariantMetadata metadata = parse_result.first;
             size_t bytes_consumed = parse_result.second;
 
@@ -420,23 +422,26 @@ class BgenReaderImpl::Impl {
             sorted_results.push_back(std::move(metadata));
 
             // Check if we need to handle a variant that spans buffer boundary
-            if (buffer_pos + bytes_consumed > buffer_valid_bytes && 
+            if (buffer_pos + bytes_consumed > buffer_valid_bytes &&
                 buffer_end_offset < file_reader_->size()) {
                 // This variant spans the buffer boundary, need to re-read with larger context
                 // This is rare but can happen with very large variant metadata
                 std::vector<uint8_t> temp_buffer(bytes_consumed + 1024);  // Add some extra space
-                size_t temp_bytes = file_reader_->read_at(offset, temp_buffer.data(), temp_buffer.size());
+                size_t temp_bytes =
+                    file_reader_->read_at(offset, temp_buffer.data(), temp_buffer.size());
                 if (temp_bytes < bytes_consumed) {
-                    throw std::runtime_error("Failed to read complete variant metadata at offset " + 
-                                           std::to_string(offset));
+                    throw std::runtime_error("Failed to read complete variant metadata at offset " +
+                                             std::to_string(offset));
                 }
 
                 // Re-parse with complete data
-                auto reparse_result = VariantParser::parse(temp_buffer.data(), temp_bytes,
-                                                         layout_type, compression_type, header_.nsamples);
+                auto reparse_result =
+                    VariantParser::parse(temp_buffer.data(), temp_bytes, layout_type,
+                                         compression_type, header_.nsamples);
                 sorted_results.back() = reparse_result.first;
                 sorted_results.back().file_offset = offset;
-                sorted_results.back().genotype_offset = offset + reparse_result.first.genotype_offset;
+                sorted_results.back().genotype_offset =
+                    offset + reparse_result.first.genotype_offset;
             }
         }
 
@@ -550,32 +555,32 @@ class BgenReaderImpl::Impl {
         }
 
         // Phase 2: Allocate single large buffer for all compressed data
-        auto consolidated_buffer = std::unique_ptr<std::vector<uint8_t>>(
-            new std::vector<uint8_t>(total_buffer_size));
-        
+        auto consolidated_buffer =
+            std::unique_ptr<std::vector<uint8_t>>(new std::vector<uint8_t>(total_buffer_size));
+
         // Phase 2.5: Advise kernel to prefetch all the regions we're about to read
         // This is done in batches to avoid too many madvise calls
         const size_t prefetch_batch_size = 32;  // Prefetch up to 32 regions at a time
         for (size_t i = 0; i < variants.size(); i += prefetch_batch_size) {
             size_t batch_end = std::min(i + prefetch_batch_size, variants.size());
-            
+
             // Calculate the range for this batch of variants
             uint64_t batch_start_offset = variants[i].genotype_offset;
-            uint64_t batch_end_offset = variants[batch_end - 1].genotype_offset + 
-                                       variants[batch_end - 1].genotype_length;
+            uint64_t batch_end_offset =
+                variants[batch_end - 1].genotype_offset + variants[batch_end - 1].genotype_length;
             size_t batch_size = batch_end_offset - batch_start_offset;
-            
+
             // Advise kernel to prefetch this batch
             file_reader_->advise(batch_start_offset, batch_size, MADV_WILLNEED);
         }
-        
+
         // Phase 3: Read all variant data into the consolidated buffer
         size_t current_offset = 0;
         for (const auto& metadata : variants) {
             // Read compressed genotype data directly into the consolidated buffer
             uint8_t* dest_ptr = consolidated_buffer->data() + current_offset;
-            size_t bytes_read = file_reader_->read_at(
-                metadata.genotype_offset, dest_ptr, metadata.genotype_length);
+            size_t bytes_read =
+                file_reader_->read_at(metadata.genotype_offset, dest_ptr, metadata.genotype_length);
 
             if (bytes_read != metadata.genotype_length) {
                 throw std::runtime_error("Failed to read genotype data for variant " +
@@ -629,7 +634,7 @@ class BgenReaderImpl::Impl {
             compressed_variants.emplace_back(metadata.file_offset, data_ptr, compressed_size,
                                              uncompressed_size, comp_type);
             compressed_variants.back().variant_id = metadata.varid;
-            
+
             // Update offset for next variant
             current_offset += metadata.genotype_length;
         }

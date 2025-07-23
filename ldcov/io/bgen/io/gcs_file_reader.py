@@ -25,8 +25,9 @@ class GCSFileReader:
         """Lazily initialize GCS filesystem."""
         if self.fs is None:
             import gcsfs
+
             self.fs = gcsfs.GCSFileSystem()
-    
+
     def open(self):
         """Open the GCS file."""
         self._ensure_fs()

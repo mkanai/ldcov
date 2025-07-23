@@ -122,11 +122,11 @@ class ParallelDecompressor : public VariantDecompressor {
    private:
     // Internal task representation
     struct DecompressionTask {
-        size_t task_id;                          // Unique task ID for ordering
-        CompressedVariant variant;               // Variant to decompress
+        size_t task_id;             // Unique task ID for ordering
+        CompressedVariant variant;  // Variant to decompress
 
         DecompressionTask(size_t id, CompressedVariant v) : task_id(id), variant(std::move(v)) {}
-        
+
         // Default constructor for queue operations
         DecompressionTask() : task_id(0), variant(0, nullptr, 0, 0, CompressionType::None) {}
     };
