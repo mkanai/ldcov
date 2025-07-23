@@ -122,14 +122,15 @@ class BenchmarkRunner:
         selected_indices = list(range(start_idx, end_idx))
         
         with open(output_file, 'w') as f:
-            # Write header
+            # Write header - NOTE: must match column names expected by variant filter
             f.write("rsid\tchromosome\tposition\tallele1\tallele2\n")
             
             for idx in selected_indices:
                 # Create variant info matching test data format
-                # Use simple rsid format that's most likely to match test data
-                rsid = f"rs{idx + 1}"  # rs1, rs2, rs3, etc. (1-based)
-                chrom = "chr1"  # Test data uses "chr1" format
+                # Test data uses rs1000000, rs1000001, etc.
+                rsid = f"rs{1000000 + idx}"
+                # The test data spans multiple chromosomes, but for simplicity use chr1
+                chrom = "chr1"  # Test data starts with chr1
                 pos = (idx + 1) * 1000  # Positions are 1000, 2000, 3000, etc.
                 allele1 = "A"
                 allele2 = "G"
