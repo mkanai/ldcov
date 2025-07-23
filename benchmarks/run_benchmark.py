@@ -377,7 +377,7 @@ class BenchmarkRunner:
             "--bgen", str(bgen_file),
             "--bgi", str(bgi_file),
             "--sample", str(sample_file),
-            "--projection", str(proj_file),
+            "--projection-matrix", str(proj_file),
             "--z", str(z_file),
             "--compute-ld",
             "--output-format", "bcor",
