@@ -189,6 +189,7 @@ cdef extern from "bgen_reader_impl.h" namespace "ldcov::io::bgen":
         # File info
         bool is_open() const
         void close()
+        uint64_t get_file_size() const
 
 # Genotype parsing
 cdef extern from "genotype_parser.h" namespace "ldcov::io::bgen":

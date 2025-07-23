@@ -132,6 +132,13 @@ class BgenReaderImpl {
      */
     void close();
 
+    /**
+     * Get file size
+     *
+     * @return File size in bytes
+     */
+    uint64_t get_file_size() const;
+
    private:
     // Implementation details hidden with pimpl
     class Impl;
