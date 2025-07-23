@@ -121,6 +121,10 @@ class BenchmarkRunner:
         # Create consecutive indices for regional selection
         selected_indices = list(range(start_idx, end_idx))
         
+        # For test data, we need to know the actual chromosome for each variant
+        # The test data has 46 variants per chromosome, cycling through chromosomes
+        variants_per_chrom = 46  # Approximate, varies slightly
+        
         with open(output_file, 'w') as f:
             # Write header - NOTE: must match column names expected by variant filter
             f.write("rsid\tchromosome\tposition\tallele1\tallele2\n")
@@ -129,9 +133,18 @@ class BenchmarkRunner:
                 # Create variant info matching test data format
                 # Test data uses rs1000000, rs1000001, etc.
                 rsid = f"rs{1000000 + idx}"
-                # The test data spans multiple chromosomes, but for simplicity use chr1
-                chrom = "chr1"  # Test data starts with chr1
-                pos = (idx + 1) * 1000  # Positions are 1000, 2000, 3000, etc.
+                
+                # Calculate which chromosome this variant is on
+                # Test data cycles through chromosomes with ~46 variants each
+                chrom_num = (idx // variants_per_chrom) + 1
+                if chrom_num > 22:
+                    chrom_num = 22  # Cap at chr22
+                chrom = f"chr{chrom_num}"
+                
+                # Position within chromosome (resets for each chromosome)
+                pos_in_chrom = (idx % variants_per_chrom) + 1
+                pos = pos_in_chrom * 1000
+                
                 allele1 = "A"
                 allele2 = "G"
                 f.write(f"{rsid}\t{chrom}\t{pos}\t{allele1}\t{allele2}\n")
