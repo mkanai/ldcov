@@ -2,6 +2,9 @@
 """
 Benchmark script for ldcov standard workflows.
 Runs various ldcov workflows and captures performance metrics.
+
+Note: Uses regional variant selection (consecutive variants) to simulate
+real-world genomic region queries, not random variant selection.
 """
 
 import json
@@ -95,11 +98,26 @@ class BenchmarkRunner:
                 f.write("\t".join(values) + "\n")
     
     def create_z_file(self, num_variants, output_file, proportion=0.5):
-        """Create a z-file with variant IDs for filtering."""
-        # Generate variant IDs to include (select a proportion of variants)
+        """Create a z-file with variant IDs for filtering - using regional selection."""
+        # Calculate number of variants to select
+        target_count = int(num_variants * proportion)
+        
+        # For regional selection, we'll select consecutive variants
+        # This simulates querying a genomic region (e.g., a gene or locus)
         np.random.seed(42)
-        selected_indices = np.random.choice(num_variants, int(num_variants * proportion), replace=False)
-        selected_indices.sort()
+        
+        # Determine the size of the region to select
+        # If we need to select 50% of variants, create one contiguous region
+        region_size = target_count
+        
+        # Select a random starting position for the region
+        # Ensure we don't go past the end of the file
+        max_start = max(1, num_variants - region_size + 1)
+        start_idx = np.random.randint(0, max_start)
+        end_idx = start_idx + region_size
+        
+        # Create consecutive indices for regional selection
+        selected_indices = list(range(start_idx, end_idx))
         
         with open(output_file, 'w') as f:
             # Write header
@@ -333,7 +351,11 @@ class BenchmarkRunner:
         return self.measure_command(cmd, "precompute_projection")
     
     def run_standard_workflow(self, bgen_file, sample_file, num_variants):
-        """Run the standard ldcov workflow with projection, z-file, and BCOR output."""
+        """Run the standard ldcov workflow with projection, z-file, and BCOR output.
+        
+        Uses regional selection (consecutive variants) to simulate real-world
+        genomic region queries rather than random variant selection.
+        """
         # First ensure projection matrix exists
         proj_file = self.temp_dir / "projection.proj.npz"
         if not proj_file.exists():
@@ -342,7 +364,7 @@ class BenchmarkRunner:
             if not proj_file.exists():
                 return {"name": "standard_workflow", "error": "Failed to create projection matrix"}
         
-        # Create z-file for variant filtering (50% of variants)
+        # Create z-file for variant filtering (50% of variants in a contiguous region)
         z_file = self.temp_dir / "variants.z"
         self.create_z_file(num_variants, z_file, proportion=0.5)
         
