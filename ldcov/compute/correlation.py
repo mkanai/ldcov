@@ -26,7 +26,7 @@ def load_and_adjust_genotypes(
     covariate_cols: Optional[List[str]] = None,
     show_progress: bool = False,
     nan_action: str = "error",
-) -> Tuple[np.ndarray, pd.DataFrame, List[str], np.ndarray, np.ndarray]:
+):
     """
     Load genotypes, standardize them, and optionally adjust for covariates.
 
