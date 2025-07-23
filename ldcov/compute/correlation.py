@@ -228,10 +228,7 @@ def compute_correlation_matrix(standardized_genotypes: np.ndarray) -> np.ndarray
     numpy.ndarray
         Correlation matrix (variants x variants).
     """
-    # Use einsum with optimization for better cache efficiency
-    # 'si,sj->ij' means: sum over samples (s) dimension
-    # optimize='optimal' lets NumPy choose the best contraction path
-    corr_matrix = np.einsum('si,sj->ij', standardized_genotypes, standardized_genotypes, 
-                           optimize='optimal')
-    
+    # Calculate correlations using dot product of standardized genotypes: t(X_scaled) %*% X_scaled
+    corr_matrix = np.dot(standardized_genotypes.T, standardized_genotypes)
+
     return corr_matrix
