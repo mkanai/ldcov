@@ -15,11 +15,6 @@ class SimpleDecompressor;
 std::unique_ptr<VariantDecompressor> create_simple_decompressor(
     const VariantDecompressor::Config& config);
 
-// Forward declaration of create_parallel_decompressor
-std::unique_ptr<VariantDecompressor> create_parallel_decompressor(
-    ldcov::io::bgen::FileReader* file_reader, size_t num_threads,
-    const VariantDecompressor::Config& config);
-
 /**
  * Create a sequential decompressor
  *
@@ -62,11 +57,10 @@ std::unique_ptr<VariantDecompressor> create_sequential_decompressor(
 }
 
 /**
- * Create an adaptive decompressor
+ * Create an adaptive decompressor (placeholder for future implementation)
  *
- * This creates a decompressor that automatically selects the best strategy
- * based on file size. Files > 10MB use parallel decompressor for better
- * performance, while smaller files use sequential decompressor.
+ * This will create a decompressor that automatically switches between
+ * sequential and random access strategies based on access patterns.
  *
  * @param file_reader FileReader instance to use
  * @param config Base decompressor configuration
@@ -75,16 +69,9 @@ std::unique_ptr<VariantDecompressor> create_sequential_decompressor(
 std::unique_ptr<VariantDecompressor> create_adaptive_decompressor(
     ldcov::io::bgen::FileReader* file_reader,
     const VariantDecompressor::Config& config = VariantDecompressor::Config()) {
-    // Check file size to determine optimal strategy
-    // Note: The Python layer now handles this logic, but we keep this 
-    // implementation for C++ API consistency
-    if (file_reader && file_reader->size() > 10 * 1024 * 1024) {  // 10MB
-        // Use parallel decompressor for larger files
-        return create_parallel_decompressor(file_reader, 0, config);  // 0 = auto-detect threads
-    } else {
-        // Use sequential decompressor for smaller files
-        return create_sequential_decompressor(file_reader, config, true);
-    }
+    // For now, just create a sequential decompressor
+    // Future implementation will add adaptive behavior
+    return create_sequential_decompressor(file_reader, config, true);
 }
 
 /**

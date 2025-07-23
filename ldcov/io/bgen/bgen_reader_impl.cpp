@@ -701,14 +701,6 @@ class BgenReaderImpl::Impl {
         is_open_ = false;
     }
 
-    // Get file size
-    uint64_t get_file_size() const {
-        if (file_reader_) {
-            return file_reader_->size();
-        }
-        return 0;
-    }
-
    private:
     // Open the BGEN file
     void openFile() {
@@ -906,10 +898,6 @@ bool BgenReaderImpl::is_open() const {
 
 void BgenReaderImpl::close() {
     pimpl_->close();
-}
-
-uint64_t BgenReaderImpl::get_file_size() const {
-    return pimpl_->get_file_size();
 }
 
 }  // namespace bgen

@@ -79,19 +79,7 @@ cdef class BgenReader:
         self.is_open = True
         
         # Configure decompressor
-        # If decompressor type is 'adaptive' (default), check file size
-        # and enable parallel decompressor for files > 10MB
-        if decompressor_type == 'adaptive':
-            file_size = self.impl.get().get_file_size()
-            if file_size > 10 * 1024 * 1024:  # 10MB
-                logger.debug(f"File size {file_size / (1024*1024):.1f}MB > 10MB, using parallel decompressor")
-                self.set_decompressor_type('parallel', num_threads)
-            else:
-                logger.debug(f"File size {file_size / (1024*1024):.1f}MB <= 10MB, using sequential decompressor")
-                self.set_decompressor_type('sequential', num_threads)
-        else:
-            # Use explicitly specified decompressor type
-            self.set_decompressor_type(decompressor_type, num_threads)
+        self.set_decompressor_type(decompressor_type, num_threads)
         
         # Load samples
         if sample_path:
