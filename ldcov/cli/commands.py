@@ -11,7 +11,11 @@ import sys
 import os
 from typing import Optional, List  # noqa: F401
 
-# Defer heavy imports - they will be imported when actually needed
+from ..compute.correlation import (
+    load_and_adjust_genotypes,
+    compute_ld_from_standardized,
+)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -229,9 +233,6 @@ def run_cli():
             bgi_file = potential_bgi
 
     # Load and adjust genotypes (common step for compute-ld and export-adjusted-bgen)
-    # Lazy import the function only when needed
-    from ..compute.correlation import load_and_adjust_genotypes
-    
     result = load_and_adjust_genotypes(
         genotype_file=args.bgen,
         covariate_file=args.covariates,
@@ -274,9 +275,6 @@ def run_cli():
             ld_output_file = f"{args.out}.bcor"
 
         logger.info("Computing LD matrix")
-        # Lazy import the function only when needed
-        from ..compute.correlation import compute_ld_from_standardized
-        
         compute_ld_from_standardized(
             standardized_genotypes=standardized_genotypes,
             variant_info=variant_info,

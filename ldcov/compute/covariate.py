@@ -5,17 +5,17 @@ This module implements Frisch-Waugh-Lovell (FWL) projection for adjusting genoty
 for covariates, following the implementation in the UK Biobank Pan Ancestry project.
 """
 
+import numpy as np
+import pandas as pd
 from typing import Optional, List, Union, Tuple, Dict
 import logging
-
-# Defer numpy/pandas imports until needed
 
 logger = logging.getLogger(__name__)
 
 
 def standardize_genotypes(
-    genotypes, center: bool = True, scale: bool = True, inplace: bool = True
-):
+    genotypes: np.ndarray, center: bool = True, scale: bool = True, inplace: bool = True
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Standardize genotypes by centering and scaling using L2 normalization.
 
@@ -38,9 +38,6 @@ def standardize_genotypes(
         - Array of means used for centering
         - Array of norms used for scaling
     """
-    # Lazy import numpy
-    import numpy as np
-    
     # Calculate means for centering
     means = np.mean(genotypes, axis=0) if center else np.zeros(genotypes.shape[1])
 
@@ -69,11 +66,11 @@ def standardize_genotypes(
 
 
 def regress_out_covariates(
-    standardized_genotypes,
-    covariates=None,
-    projection_matrix_Q=None,
+    standardized_genotypes: np.ndarray,
+    covariates: Union[np.ndarray, pd.DataFrame, None] = None,
+    projection_matrix_Q: Optional[np.ndarray] = None,
     inplace: bool = True,
-):
+) -> np.ndarray:
     """
     Regress out covariates from standardized genotypes using FWL (Frisch-Waugh-Lovell) projection.
 
@@ -103,10 +100,6 @@ def regress_out_covariates(
         If neither covariates nor projection_matrix_Q is provided.
         If pandas DataFrame contains categorical columns.
     """
-    # Lazy imports
-    import numpy as np
-    import pandas as pd
-    
     # Validate inputs
     if projection_matrix_Q is None and covariates is None:
         raise ValueError("Either covariates or projection_matrix_Q must be provided")
