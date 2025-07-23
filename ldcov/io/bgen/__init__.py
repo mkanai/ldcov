@@ -6,11 +6,8 @@ optimized for ldcov's specific use cases.
 """
 
 import os
-import numpy as np
-import pandas as pd
 from typing import Optional, List, Tuple, Dict, Any
 import logging
-from tqdm import tqdm
 
 # Import the high-performance BGEN reader
 from .reader import BgenReader
@@ -27,19 +24,29 @@ def _create_progress_callback(show_progress: bool, total: int, desc: str = "Load
     if not show_progress:
         return None
 
+    # Lazy import tqdm only when needed
+    from tqdm import tqdm
     pbar = tqdm(total=total, desc=desc, unit="variants")
+    
+    # Update every 100 variants or at least every 1%
+    update_freq = min(100, max(1, total // 100))
 
     def callback(current):
-        pbar.n = current
-        pbar.refresh()
+        # Only update progress bar at specified frequency
+        if current % update_freq == 0 or current >= total:
+            pbar.n = current
+            pbar.refresh()
         if current >= total:
             pbar.close()
 
     return callback
 
 
-def _validate_dosages(dosages: np.ndarray) -> None:
+def _validate_dosages(dosages) -> None:
     """Validate dosage values are within expected range."""
+    # Lazy import numpy
+    import numpy as np
+    
     # Check for out-of-range dosage values
     min_dosage = np.nanmin(dosages)
     max_dosage = np.nanmax(dosages)
@@ -62,10 +69,10 @@ def load_bgen(
     region: Optional[str] = None,
     variant_filter: Optional[Dict[str, Any]] = None,
     sample_ids: Optional[List[str]] = None,
-    dtype: np.dtype = np.float64,
-    show_progress: bool = True,
+    dtype=None,
+    show_progress: bool = False,
     nan_action: str = "error",
-) -> Tuple[np.ndarray, pd.DataFrame, List[str]]:
+):
     """
     Load genotype data from BGEN file.
 
@@ -84,9 +91,9 @@ def load_bgen(
     sample_ids : list of str, optional
         Sample IDs to keep. If None, all samples are loaded.
     dtype : numpy.dtype, optional
-        Data type for the dosage array (default: np.float64)
+        Data type for the dosage array (default: numpy.float64)
     show_progress : bool, optional
-        Whether to show progress bars during loading (default: True)
+        Whether to show progress bars during loading (default: False)
     nan_action : str, optional
         Action for handling NaN values: 'error' (default), 'mean', or 'omit'
 
@@ -94,10 +101,21 @@ def load_bgen(
     -------
     tuple
         (genotypes, variant_info, sample_ids)
+        genotypes: numpy.ndarray
+        variant_info: pandas.DataFrame
+        sample_ids: list of str
         Note: genotypes are returned as floating point values of the specified dtype
         If variant_filter is provided, variants are ordered according to the .z file order
         If sample_ids is provided, only those samples are returned
     """
+    # Lazy import heavy modules
+    import numpy as np
+    import pandas as pd
+    
+    # Set default dtype if not provided
+    if dtype is None:
+        dtype = np.float64
+    
     # Check BGEN file exists (skip for GCS paths)
     if not file_path.startswith("gs://") and not os.path.exists(file_path):
         raise FileNotFoundError(f"BGEN file not found: {file_path}")

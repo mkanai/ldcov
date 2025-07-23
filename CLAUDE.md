@@ -9,7 +9,7 @@ ldcov is a Python package for efficient linkage disequilibrium (LD) calculation 
 **Key Features**:
 - Pre-computed projection matrix support for efficient large-scale analyses
 - Sample filtering during BGEN loading for memory efficiency
-- Progress bars for variant loading operations (`--no-progress` to disable)
+- Progress bars for variant loading operations (use `--progress` to enable)
 - Flexible NaN handling with `--nan-action` (error/mean/omit)
 - Custom Cython-based BGEN reader with BGI index requirement
 - High-performance C++ batch decompressor with graceful Python fallback

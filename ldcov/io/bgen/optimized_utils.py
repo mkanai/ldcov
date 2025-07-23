@@ -9,8 +9,6 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, Future
 
-import gcsfs
-
 logger = logging.getLogger(__name__)
 
 
@@ -121,6 +119,7 @@ class OptimizedBGICache:
 
         # Initialize GCS filesystem if needed
         if self._fs is None:
+            import gcsfs
             self._fs = gcsfs.GCSFileSystem()
 
         # Retry logic

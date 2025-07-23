@@ -33,7 +33,7 @@ def load_and_adjust_genotypes(
     z_file: Optional[str] = None,
     covariate_id_col: str = "IID",
     covariate_cols: Optional[List[str]] = None,
-    show_progress: bool = True,
+    show_progress: bool = False,
     nan_action: str = "error",
 ) -> Tuple[np.ndarray, pd.DataFrame, List[str], np.ndarray, np.ndarray]:
     """
@@ -61,7 +61,7 @@ def load_and_adjust_genotypes(
     covariate_cols : list of str, optional
         Specific columns to use as covariates. If None, all columns except ID are used
     show_progress : bool, optional
-        Whether to show progress bars during loading (default: True)
+        Whether to show progress bars during loading (default: False)
     nan_action : str, optional
         Action for handling NaN values: 'error' (default), 'mean', or 'omit'
 

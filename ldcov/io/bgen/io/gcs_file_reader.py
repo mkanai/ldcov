@@ -2,7 +2,6 @@
 
 import os
 from typing import Optional
-import gcsfs
 
 
 class GCSFileReader:
@@ -18,12 +17,19 @@ class GCSFileReader:
             raise ValueError(f"Path must start with gs://: {path}")
 
         self.path = path
-        self.fs = gcsfs.GCSFileSystem()
+        self.fs = None  # Will be initialized lazily
         self._file = None
         self._buffer_size = 10 * 1024 * 1024  # 10MB buffer as per Phase 1 optimization
 
+    def _ensure_fs(self):
+        """Lazily initialize GCS filesystem."""
+        if self.fs is None:
+            import gcsfs
+            self.fs = gcsfs.GCSFileSystem()
+    
     def open(self):
         """Open the GCS file."""
+        self._ensure_fs()
         self._file = self.fs.open(self.path, "rb")
 
     def close(self):

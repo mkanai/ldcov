@@ -125,9 +125,9 @@ Examples:
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
     parser.add_argument(
-        "--no-progress",
+        "--progress",
         action="store_true",
-        help="Disable progress bars during loading (useful for scripts)",
+        help="Enable progress bars during loading (disabled by default)",
     )
 
     parser.add_argument(
@@ -243,7 +243,7 @@ def run_cli():
         z_file=args.z,
         covariate_id_col=args.covariate_id_col,
         covariate_cols=args.covariate_cols,
-        show_progress=not args.no_progress,
+        show_progress=args.progress,
         nan_action=args.nan_action,
     )
     standardized_genotypes, variant_info, sample_ids, means, norms = result
