@@ -340,21 +340,99 @@ cdef class BgenReader:
         for batch_start in range(0, n_variants, batch_size):
             batch_end = min(batch_start + batch_size, n_variants)
             
-            # Process batch of variants
-            for i in range(batch_start, batch_end):
-                # Read and process variant directly without storing DecompressedData
-                # This avoids copy assignment issues with move-only types
-                variant_dosages = self._read_and_parse_single_variant(variant_metadata[i], sample_indices)
-                dosages[:, i] = variant_dosages
-                
-                # Progress callback
-                if progress_callback is not None:
+            # OPTIMIZATION: Read entire batch in one I/O operation
+            batch_dosages = self._read_and_parse_batch(
+                variant_metadata[batch_start:batch_end], 
+                sample_indices,
+                batch_start
+            )
+            
+            # Copy batch results to output array
+            dosages[:, batch_start:batch_end] = batch_dosages
+            
+            # Progress callback for the batch
+            if progress_callback is not None:
+                for i in range(batch_start, batch_end):
                     progress_callback(i + 1)
         
         # Create variant info DataFrame
         variant_info = self._create_variant_info(variant_metadata)
         
         return dosages, variant_info
+    
+    cdef np.ndarray _read_and_parse_batch(self, vector[VariantMetadata] batch_metadata,
+                                         np.ndarray sample_indices,
+                                         int batch_start_idx):
+        """Read and parse a batch of variants using batch I/O."""
+        cdef int batch_size = batch_metadata.size()
+        if batch_size == 0:
+            return np.empty((0, 0), dtype=np.float32)
+        
+        # Get sample dimensions
+        cdef uint32_t n_samples = self.header_info.nsamples
+        cdef uint32_t n_samples_out
+        cdef const uint32_t* sample_indices_ptr = NULL
+        cdef uint32_t n_indices = 0
+        
+        if sample_indices is not None:
+            n_samples_out = len(sample_indices)
+            sample_indices_ptr = <const uint32_t*>np.PyArray_DATA(sample_indices)
+            n_indices = n_samples_out
+        else:
+            n_samples_out = n_samples
+        
+        # Pre-allocate output array for the batch
+        cdef np.ndarray[np.float32_t, ndim=2] batch_dosages = np.empty(
+            (n_samples_out, batch_size), dtype=np.float32, order='F'
+        )
+        
+        # Read all variants in the batch using C++ batch API
+        cdef vector[unique_ptr[DecompressedData]] batch_data
+        batch_data = move(self.impl.get().read_variants_batch(batch_metadata))
+        
+        # Parse each variant in the batch
+        cdef int i
+        cdef LayoutType layout_type = LayoutType_V11 if self.header_info.layout == 1 else LayoutType_V12
+        cdef const uint8_t* parser_buffer
+        cdef size_t parser_size
+        cdef str error_msg
+        cdef uint64_t offset
+        
+        for i in range(batch_size):
+            if not batch_data[i] or not batch_data[i].get().is_valid():
+                error_msg = "Unknown error" if not batch_data[i] else batch_data[i].get().error_message.decode('utf-8')
+                offset = batch_metadata[i].file_offset
+                raise RuntimeError(f"Failed to decompress variant at offset {offset}: {error_msg}")
+            
+            # Get parser buffer info
+            parser_buffer = batch_data[i].get().data()
+            parser_size = batch_data[i].get().size
+            
+            # Parse genotypes - data is already decompressed
+            if sample_indices_ptr != NULL:
+                GenotypeParser.computeDosagesFiltered(
+                    parser_buffer,
+                    parser_size,
+                    layout_type,
+                    CompressionType_None,  # Data is already decompressed
+                    n_samples,
+                    batch_metadata[i].n_alleles,
+                    <const int*>sample_indices_ptr,
+                    n_indices,
+                    <float*>np.PyArray_DATA(batch_dosages[:, i])
+                )
+            else:
+                GenotypeParser.computeDosagesDirect(
+                    parser_buffer,
+                    parser_size,
+                    layout_type,
+                    CompressionType_None,  # Data is already decompressed
+                    n_samples,
+                    batch_metadata[i].n_alleles,
+                    <float*>np.PyArray_DATA(batch_dosages[:, i])
+                )
+        
+        return batch_dosages
     
     cdef np.ndarray _read_and_parse_single_variant(self, const VariantMetadata& metadata, 
                                                    np.ndarray sample_indices):
@@ -472,19 +550,36 @@ cdef class BgenReader:
     
     def _create_variant_info(self, vector[VariantMetadata]& metadata) -> pd.DataFrame:
         """Create variant info DataFrame from metadata."""
-        info_list = []
+        cdef int n_variants = metadata.size()
+        if n_variants == 0:
+            return pd.DataFrame()
+        
+        # OPTIMIZATION: Pre-allocate arrays for each column
+        cdef list chroms = [None] * n_variants
+        cdef list positions = [None] * n_variants
+        cdef list rsids = [None] * n_variants
+        cdef list refs = [None] * n_variants
+        cdef list alts = [None] * n_variants
+        
+        cdef int i
         cdef VariantMetadata var
         
-        for var in metadata:
-            info_list.append({
-                'chrom': var.chrom.decode('utf-8'),
-                'pos': var.pos,
-                'rsid': var.rsid.decode('utf-8'),
-                'ref': var.alleles[0].decode('utf-8') if var.alleles.size() > 0 else '',
-                'alt': var.alleles[1].decode('utf-8') if var.alleles.size() > 1 else ''
-            })
+        for i in range(n_variants):
+            var = metadata[i]
+            chroms[i] = var.chrom.decode('utf-8')
+            positions[i] = var.pos
+            rsids[i] = var.rsid.decode('utf-8')
+            refs[i] = var.alleles[0].decode('utf-8') if var.alleles.size() > 0 else ''
+            alts[i] = var.alleles[1].decode('utf-8') if var.alleles.size() > 1 else ''
         
-        return pd.DataFrame(info_list)
+        # Create DataFrame from pre-allocated columns
+        return pd.DataFrame({
+            'chrom': chroms,
+            'pos': positions,
+            'rsid': rsids,
+            'ref': refs,
+            'alt': alts
+        })
     
     def read_variant(self, offset: int) -> Variant:
         """

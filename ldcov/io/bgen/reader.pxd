@@ -227,6 +227,9 @@ cdef class BgenReader:
         dtype, progress_callback)
     cdef np.ndarray _read_and_parse_single_variant(self, const VariantMetadata& metadata,
                                                    np.ndarray sample_indices)
+    cdef np.ndarray _read_and_parse_batch(self, vector[VariantMetadata] batch_metadata,
+                                         np.ndarray sample_indices,
+                                         int batch_start_idx)
     cdef np.ndarray _parse_genotypes(self, const DecompressedData& data, 
                                     const VariantMetadata& metadata)
 
