@@ -112,7 +112,9 @@ class BenchmarkRunner:
         
         # Select a random starting position for the region
         # Ensure we don't go past the end of the file
-        max_start = max(1, num_variants - region_size + 1)
+        max_start = num_variants - region_size + 1
+        if max_start <= 0:
+            max_start = 1
         start_idx = np.random.randint(0, max_start)
         end_idx = start_idx + region_size
         
@@ -123,12 +125,13 @@ class BenchmarkRunner:
             # Write header
             f.write("rsid\tchromosome\tposition\tallele1\tallele2\n")
             
-            for idx in selected_indices:
+            for i, idx in enumerate(selected_indices):
                 # Create variant info matching test data format
-                # Test data uses rs1000000, rs1000001, etc. with positions 1000, 2000, etc.
-                rsid = f"rs{1000000 + idx}"
+                # Variant numbering is 1-based in test data
+                variant_num = idx + 1  # Convert 0-based index to 1-based variant number
+                rsid = f"rs{1000000 + variant_num - 1}"  # rs1000000, rs1000001, etc.
                 chrom = "chr1"  # Test data uses "chr1" not just "1"
-                pos = (idx + 1) * 1000  # Positions are 1000, 2000, 3000, etc.
+                pos = variant_num * 1000  # Positions are 1000, 2000, 3000, etc.
                 allele1 = "A"
                 allele2 = "G"
                 f.write(f"{rsid}\t{chrom}\t{pos}\t{allele1}\t{allele2}\n")
