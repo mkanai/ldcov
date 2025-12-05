@@ -75,20 +75,6 @@ markers = [
     "integration: marks tests as integration tests (may require external resources)"
 ]
 
-[tool.setuptools.ext_modules]
-# Configuration for building extensions
-# Note: Complex build logic still handled by setup.py
-
-[tool.setuptools.command_options]
-# Build extension options (formerly from setup.cfg [build_ext])
-build_ext = {inplace = true}
-
-# Source distribution options (formerly from setup.cfg [sdist])
-sdist = {formats = ["gztar"]}
-
-# Binary wheel options (formerly from setup.cfg [bdist_wheel])
-bdist_wheel = {universal = false}
-
 [tool.flake8]
 max-line-length = 100
 exclude = ["__pycache__", "build", "dist", "*.egg-info", ".git", "ldcov/io/bgen/zlib-ng", "ldcov/io/bgen/zstd"]
