@@ -1,0 +1,86 @@
+# Multi-stage Dockerfile for benchmarking specific ldcov commits
+# Stage 1: Checkout specific commit from local repository
+FROM python:3.11-slim as git-checkout
+
+# Install git
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
+# Copy the entire repository including .git
+WORKDIR /repo
+COPY . .
+
+# Checkout the specified commit
+ARG GIT_COMMIT=HEAD
+RUN if [ -d .git ]; then \
+        # Ensure we have all commits (in case of shallow clone)
+        git fetch --unshallow 2>/dev/null || true; \
+        # Reset any local changes first
+        git reset --hard HEAD && \
+        git clean -fdx && \
+        # Checkout the specific commit
+        git checkout ${GIT_COMMIT} && \
+        # Capture commit info for later stages with full timestamp
+        git log -1 --format="%H %cd %s" --date=iso-strict > /tmp/COMMIT_INFO.txt && \
+        git rev-parse HEAD > /tmp/COMMIT_HASH.txt && \
+        # Clean up any untracked files again after checkout
+        git clean -fdx; \
+        # NOTE: Keeping .git directory for potential build dependencies
+    else \
+        echo "ERROR: No .git directory found" && exit 1; \
+    fi
+
+# Stage 2: Build and run environment
+FROM python:3.11-slim
+
+# Install system dependencies and profiling tools
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    cmake \
+    make \
+    sqlite3 \
+    libsqlite3-dev \
+    git \
+    linux-perf \
+    graphviz \
+    # OpenBLAS for optimized linear algebra operations
+    libopenblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the checked-out code from previous stage
+WORKDIR /app
+COPY --from=git-checkout /repo .
+COPY --from=git-checkout /tmp/COMMIT_INFO.txt /app/COMMIT_INFO.txt
+COPY --from=git-checkout /tmp/COMMIT_HASH.txt /app/COMMIT_HASH.txt
+
+# Enable SIMD optimizations (AVX2 + FMA for x86_64)
+ENV CFLAGS="-O3 -mfma -mavx -mavx2"
+ENV CXXFLAGS="-O3 -mfma -mavx -mavx2 -std=c++17"
+
+# Ensure we don't use system libraries
+ENV LDCOV_USE_SYSTEM_LIBS=0
+
+# Install build dependencies and ldcov
+RUN pip install --upgrade pip && \
+    pip install numpy cython && \
+    pip install -e . && \
+    pip install psutil memory_profiler pandas matplotlib seaborn gprof2dot snakeviz
+
+# Create directories for mounting
+RUN mkdir -p /data/test_data /app/benchmarks /results
+
+# Verify numpy is using OpenBLAS
+RUN python -c "import numpy; numpy.show_config()" | grep -i blas || true
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV OMP_NUM_THREADS=4
+ENV MKL_NUM_THREADS=4
+ENV NUMEXPR_NUM_THREADS=4
+ENV OPENBLAS_NUM_THREADS=4
+
+# Note about perf: Container needs to be run with --cap-add=SYS_ADMIN for perf to work
+# Example: docker run --cap-add=SYS_ADMIN -v $(pwd)/results:/results ldcov:benchmark
+
+# Default command
+CMD ["python", "--version"]

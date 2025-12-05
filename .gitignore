@@ -1,0 +1,123 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Distribution / packaging
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# virtualenv
+.venv
+venv/
+ENV/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS-specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+
+# Local configuration
+.env
+.envrc
+
+# uv lock file (not needed for libraries)
+uv.lock
+
+# Claude AI instructions (local development only)
+CLAUDE.md
+
+# Cython build artifacts
+# Ignore ONLY Cython-generated C/C++ files (those with corresponding .pyx files)
+# Hand-written C++ files in subdirectories are tracked by git
+ldcov/io/bgen/_bgen.cpp
+ldcov/io/bgen/_decompressor.cpp
+ldcov/io/bgen/header.cpp
+ldcov/io/bgen/reader.cpp
+ldcov/io/bgen/variant.cpp
+ldcov/io/bgen/_reader_v2.cpp
+ldcov/io/bgen/reader_v1.cpp
+ldcov/**/*.c
+*.so
+*.html
+build/
+*.egg-info/
+
+# Auto-generated build configuration
+ldcov/io/bgen/_build_config.py
+
+# Reference files (not for commit)
+reference_only/
+
+# Benchmark test data (large BGEN files)
+benchmarks/test_data/
+benchmark_logs/
+benchmark_results/
+comparison_results/
+ldcov/io/bgen/reader_v1.cpp

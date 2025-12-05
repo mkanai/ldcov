@@ -1,0 +1,6 @@
+[submodule "ldcov/io/bgen/zlib-ng"]
+	path = ldcov/io/bgen/zlib-ng
+	url = https://github.com/zlib-ng/zlib-ng.git
+[submodule "ldcov/io/bgen/zstd"]
+	path = ldcov/io/bgen/zstd
+	url = https://github.com/facebook/zstd.git

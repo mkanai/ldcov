@@ -1,0 +1,54 @@
+# Dockerignore for multi-stage benchmark builds
+# This allows .git directory to be included in the build context
+# so we can checkout specific commits
+
+# Exclude common unnecessary files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.log
+.coverage
+.pytest_cache/
+.tox/
+.env
+.venv/
+venv/
+ENV/
+
+# Exclude build artifacts
+*.o
+*.a
+*.dylib
+*.dll
+*.exe
+
+# Exclude IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Exclude documentation builds
+docs/_build/
+docs/_static/
+docs/_templates/
+
+# Exclude test data and results
+benchmark_results/
+benchmark_results_*/
+benchmark_logs/
+test_data/large_*.bgen
+test_data/large_*.bgen.bgi
+*.bcor
+
+# DO NOT exclude .git - we need it for checking out commits
+# !.git/
