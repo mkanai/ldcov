@@ -1,4 +1,4 @@
-# ldcov: Linkage Disequilibrium with Covariate adjustment
+# ldcov
 
 A Python package for efficient linkage disequilibrium (LD) calculation with covariate adjustment for BGEN format genetic data.
 
@@ -26,10 +26,10 @@ A Python package for efficient linkage disequilibrium (LD) calculation with cova
 
 ```bash
 # Install from GitHub (recommended)
-pip install git+https://github.com/mkanai/ldcov.git
+pip install git+https://github.com/mkanai/ldcov
 
 # For development
-git clone https://github.com/mkanai/ldcov.git
+git clone https://github.com/mkanai/ldcov
 cd ldcov
 git submodule update --init --recursive  # Get compression libraries
 pip install -e .
@@ -38,6 +38,7 @@ pip install -e .
 ### Compression Libraries
 
 ldcov uses high-performance compression libraries for BGEN file reading:
+
 - **zlib-ng**: An optimized zlib replacement (10-30% faster)
 - **zstd**: Fast compression library
 
@@ -53,6 +54,7 @@ LDCOV_USE_SYSTEM_LIBS=1 pip install git+https://github.com/mkanai/ldcov.git
 ```
 
 **Warning**: Using system libraries may result in:
+
 - Different behavior between systems
 - Slower performance (standard zlib vs optimized zlib-ng)
 - Potential version incompatibilities
@@ -86,11 +88,13 @@ ldcov --bgen gs://bucket/data.bgen -c gs://bucket/covariates.txt --compute-ld --
 ```
 
 **Requirements**:
+
 - Install gcsfs: `pip install gcsfs` (included in dependencies)
 - BGI index files (`.bgen.bgi`) must exist alongside BGEN files on GCS
 - Appropriate GCS credentials configured (via gcloud, service account, etc.)
 
 **How it works**:
+
 - BGEN files are streamed from GCS using efficient range requests
 - BGI index files are downloaded to current directory (like bcftools)
 - Smart buffering minimizes API calls and latency
@@ -141,6 +145,7 @@ ldcov --bgen input.bgen -c covariates.txt --compute-ld --save-projection --out r
 ```
 
 This is particularly useful for:
+
 - Processing multiple genomic regions with the same covariates
 - Distributed computing across a cluster
 - Iterative analyses with different variant filters
@@ -252,10 +257,17 @@ For efficiency, the QR decomposition can be pre-computed once and reused across 
 - Python 3.8+
 - numpy >= 1.19.0
 - pandas >= 1.0.0
-- zstandard >= 0.15.0
 - gcsfs >= 0.7.0
 - tqdm >= 4.50.0
 
 ## License
 
 MIT License
+
+## Citation
+
+Kanai, M. et al. [Population-scale multiome immune cell atlas reveals complex disease drivers](https://doi.org/10.1101/2025.11.25.25340489). medRxiv (2025)
+
+## Contact
+
+Masahiro Kanai (<mkanai@broadinstitute.org>)
