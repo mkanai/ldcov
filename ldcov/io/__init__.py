@@ -11,3 +11,4 @@ from .correlation_io import save_correlation_matrix, load_correlation_matrix
 from .bcor_reader import BcorReader
 from .bcor_writer import BcorWriter, save_bcor
 from .bcor_index import BcorIndexReader, BcorIndexWriter
+from .bcor_file_handle import BcorFileHandle
