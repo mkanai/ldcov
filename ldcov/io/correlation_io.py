@@ -26,6 +26,7 @@ def save_correlation_matrix(
     output_format: str = "matrix",
     n_samples: int = 1000,
     compression: int = 1,
+    write_index: bool = True,
 ) -> None:
     """
     Save correlation matrix to file.
@@ -44,6 +45,8 @@ def save_correlation_matrix(
         Number of samples (for bcor format metadata)
     compression : int, optional
         Compression level for bcor format (0=1byte, 1=2bytes, 2=4bytes, 3=8bytes)
+    write_index : bool, optional
+        When output_format=='bcor', also emit a .bcor.idx sidecar (default True)
     """
     # Check output format
     if output_format not in ["matrix", "long", "bcor"]:
@@ -56,7 +59,14 @@ def save_correlation_matrix(
 
     # Save as bcor file if specified
     if output_format == "bcor" or output_file.endswith(".bcor"):
-        save_bcor(corr_matrix, output_file, variant_info, n_samples, compression)
+        save_bcor(
+            corr_matrix,
+            output_file,
+            variant_info,
+            n_samples,
+            compression,
+            write_index=write_index,
+        )
         return
 
     # Determine if output should be compressed

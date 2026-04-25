@@ -114,6 +114,14 @@ Examples:
         help="Output format for LD matrix (default: matrix)",
     )
 
+    parser.add_argument(
+        "--no-bcor-idx",
+        dest="bcor_index",
+        action="store_false",
+        default=True,
+        help="Skip writing .bcor.idx sidecar (only meaningful with --output-format bcor).",
+    )
+
     parser.add_argument("--sample", help="Path to sample file (.sample, optional)")
 
     parser.add_argument(
@@ -280,6 +288,7 @@ def run_cli():
             variant_info=variant_info,
             output_file=ld_output_file,
             output_format=args.output_format,
+            write_index=args.bcor_index,
         )
         logger.info(f"LD matrix saved to {ld_output_file}")
 

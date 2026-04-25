@@ -19,7 +19,6 @@ from ..io import load_bgen
 from ..io.covariate_loader import load_covariates
 from ..io.correlation_io import save_correlation_matrix
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -187,6 +186,7 @@ def compute_ld_from_standardized(
     variant_info: pd.DataFrame,
     output_file: str,
     output_format: str = "matrix",
+    write_index: bool = True,
 ) -> None:
     """
     Compute LD matrix from standardized genotypes and save to file.
@@ -201,13 +201,19 @@ def compute_ld_from_standardized(
         Path to output LD file
     output_format : str
         Output format ("matrix", "long", "bcor")
+    write_index : bool
+        When output_format=='bcor', also emit a .bcor.idx sidecar (default True).
     """
     logger.info("Computing LD matrix")
     corr_matrix = compute_correlation_matrix(standardized_genotypes)
 
     # Save to file
     save_correlation_matrix(
-        corr_matrix, output_file, variant_info=variant_info, output_format=output_format
+        corr_matrix,
+        output_file,
+        variant_info=variant_info,
+        output_format=output_format,
+        write_index=write_index,
     )
 
     logger.info(f"LD matrix saved to {output_file}")

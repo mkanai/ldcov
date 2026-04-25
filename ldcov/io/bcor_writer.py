@@ -72,7 +72,13 @@ class BcorWriter:
     # Compression to bytes mapping
     _COMPRESSION_BYTES = [2, 4, 8, 1]
 
-    def __init__(self, output_file: str, n_samples: int = 1000, compression: int = 1):
+    def __init__(
+        self,
+        output_file: str,
+        n_samples: int = 1000,
+        compression: int = 1,
+        write_index: bool = True,
+    ):
         """
         Initialize bcor writer.
 
@@ -88,10 +94,13 @@ class BcorWriter:
             - 1: 4 bytes per value (uint32) [default]
             - 2: 8 bytes per value (uint64)
             - 3: 1 byte per value (uint8)
+        write_index : bool, optional
+            Whether to emit a .bcor.idx sidecar (default True)
         """
         self.output_file = output_file
         self.n_samples = n_samples
         self.compression = compression
+        self.write_index = write_index
 
         if compression not in [0, 1, 2, 3]:
             raise ValueError(f"Invalid compression level: {compression}. Must be 0, 1, 2, or 3.")
@@ -143,9 +152,11 @@ class BcorWriter:
         if use_extended:
             logger.info("Detected non-unit diagonal values, using extended bcor format")
 
-        # Prepare metadata efficiently
-        meta_buffer = self._prepare_metadata_buffer(variant_info)
+        # Prepare metadata efficiently; capture per-variant byte offsets
+        meta_buffer, buffer_offsets = self._prepare_metadata_buffer(variant_info)
         meta_size = len(meta_buffer)
+
+        header_size = 7 + 8 + 4 + 4 + 1 + 8  # = 32
 
         with open(self.output_file, "wb") as fh:
             # Write header
@@ -169,9 +180,24 @@ class BcorWriter:
             f"({self._bytes_per_value} bytes per value)"
         )
 
-    def _prepare_metadata_buffer(self, variant_info: pd.DataFrame) -> bytes:
-        """Prepare entire metadata buffer efficiently."""
+        if self.write_index:
+            from .bcor_index import BcorIndexWriter
+
+            absolute_offsets = buffer_offsets + np.uint64(header_size)
+            idx_path = self.output_file + ".idx"
+            BcorIndexWriter(idx_path).write(
+                variant_info=variant_info,
+                meta_record_offsets=absolute_offsets,
+                bcor_meta_start=header_size,
+                bcor_file_size=actual_file_size,
+                bcor_corr_block_offset=corr_block_offset,
+            )
+            logger.info(f"Saved bcor index sidecar to {idx_path}")
+
+    def _prepare_metadata_buffer(self, variant_info: pd.DataFrame):
+        """Prepare metadata buffer. Returns (bytes, offsets_within_buffer_uint64[n+1])."""
         buffer = io.BytesIO()
+        offsets = [0]  # offset of variant 0
 
         # Pre-encode strings
         encoded_data = []
@@ -223,8 +249,10 @@ class BcorWriter:
             buffer.write(data["allele1"])
             buffer.write(struct.pack("<I", len(data["allele2"])))
             buffer.write(data["allele2"])
+            offsets.append(buffer.tell())
 
-        return buffer.getvalue()
+        offsets_arr = np.asarray(offsets, dtype=np.uint64)
+        return buffer.getvalue(), offsets_arr
 
     def _write_header(self, fh, n_snps: int, meta_size: int, use_extended: bool) -> int:
         """Write bcor file header and return correlation block offset."""
@@ -343,6 +371,7 @@ def save_bcor(
     variant_info: Optional[pd.DataFrame] = None,
     n_samples: int = 1000,
     compression: int = 1,
+    write_index: bool = True,
 ) -> None:
     """
     Save correlation matrix in bcor format.
@@ -363,9 +392,16 @@ def save_bcor(
         Number of samples (for metadata)
     compression : int, optional
         Compression level (0=2bytes, 1=4bytes, 2=8bytes, 3=1byte)
+    write_index : bool, optional
+        Whether to emit a .bcor.idx sidecar (default True)
 
     Example:
         >>> save_bcor(corr_matrix, 'output.bcor', variant_info, compression=1)
     """
-    writer = BcorWriter(output_file, n_samples=n_samples, compression=compression)
+    writer = BcorWriter(
+        output_file,
+        n_samples=n_samples,
+        compression=compression,
+        write_index=write_index,
+    )
     writer.write(corr_matrix, variant_info)
