@@ -28,12 +28,15 @@ def one_hot_encode_categorical(df: pd.DataFrame) -> pd.DataFrame:
     # Make a copy to avoid modifying the original
     encoded_df = df.copy()
 
-    # Find categorical columns
+    # Find categorical columns. Handle both legacy `object` dtype and the newer pandas
+    # `string`/`str` dtypes (the latter becomes default with future.infer_string=True or
+    # in pandas 3.x).
     categorical_columns = []
     for col in encoded_df.columns:
-        if encoded_df[col].dtype == "object" or isinstance(
-            encoded_df[col].dtype, pd.CategoricalDtype
-        ):
+        col_dtype = encoded_df[col].dtype
+        if (
+            pd.api.types.is_string_dtype(col_dtype) and not pd.api.types.is_numeric_dtype(col_dtype)
+        ) or isinstance(col_dtype, pd.CategoricalDtype):
             categorical_columns.append(col)
 
     # Apply one-hot encoding to all categorical columns
