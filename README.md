@@ -13,6 +13,7 @@ A Python package for efficient linkage disequilibrium (LD) calculation with cova
 - **Cloud storage support**: Load BGEN files and covariates directly from Google Cloud Storage (gs://)
 - **Optimized for large datasets**: Efficient memory usage and computation
 - **GCS BGEN reading**: Stream BGEN files from Google Cloud Storage without downloading
+- **BCOR index (`.bcor.idx`)**: Auto-emitted alongside `.bcor` outputs to enable O(1) rsid lookups and partial reads (including over GCS) without scanning metadata
 
 ## Installation
 
@@ -127,7 +128,7 @@ ldcov --bgen input.bgen --bgi input.bgen.bgi --out output --compute-ld
 ldcov --bgen input.bgen --out output --compute-ld -c gs://bucket/covariates.txt
 ```
 
-### Pre-computed Projection Matrices (New!)
+### Pre-computed Projection Matrices
 
 For large-scale analyses, you can pre-compute the covariate projection matrix once and reuse it:
 
@@ -154,8 +155,35 @@ This is particularly useful for:
 
 Based on the flags used, ldcov will create:
 
-- `--compute-ld`: Creates `{out}.ld` (matrix format) or `{out}.ld.gz` (long format)
-- `--precompute-projection` or `--save-projection`: Creates `{out}.proj.npz`
+- `--compute-ld --output-format matrix`: `{out}.ld` (default; tab-delimited matrix)
+- `--compute-ld --output-format long`: `{out}.ld.gz` (gzipped long format)
+- `--compute-ld --output-format bcor`: `{out}.bcor` (binary correlation format) and, by default, a `{out}.bcor.idx` index file (pass `--no-bcor-idx` to skip)
+- `--precompute-projection` or `--save-projection`: `{out}.proj.npz`
+
+### BCOR Index
+
+When `--output-format bcor` is selected, ldcov also writes a small `.bcor.idx` index file that maps rsid → row and records per-variant byte offsets. This lets `BcorReader` resolve rsid-based queries without scanning the variable-length metadata block, which matters most when reading remote files:
+
+```python
+from ldcov.io import BcorReader
+
+# Local or gs:// — same API. The .bcor.idx auto-loads if present alongside the .bcor.
+reader = BcorReader("gs://bucket/study.bcor")
+
+# Partial read by rsid — fetches only the bytes needed (range-merged, parallelized for GCS).
+subset, meta = reader.read_corr_by_rsid(["rs1234", "rs5678", "rs9012"])
+
+# Two-list (asymmetric) query.
+subset, meta = reader.read_corr_by_rsid(rsids_a, rsids2=rsids_b)
+```
+
+To generate an index for an existing `.bcor` file (e.g., LDstore output), run:
+
+```bash
+python scripts/make_bcor_idx.py path/to/file.bcor
+```
+
+The index binds to its parent `.bcor` via a header-level fingerprint, so stale or truncated pairs are detected at load time and the reader falls back gracefully.
 
 ### Python API
 

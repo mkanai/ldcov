@@ -9,10 +9,14 @@ This module tests:
 """
 
 import os
-import pandas as pd
-import numpy as np
-import pytest
 import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
 
 
 class TestCLI:
@@ -215,6 +219,8 @@ class TestCLI:
                 assert os.path.exists(f"{output_prefix}.ld.gz")
             elif fmt == "bcor":
                 assert os.path.exists(f"{output_prefix}.bcor")
+                # Sidecar index is written by default — regression guard for Task 5.
+                assert os.path.exists(f"{output_prefix}.bcor.idx")
 
     # ==================== Region and Z-file Tests ====================
 
@@ -424,3 +430,42 @@ class TestCLI:
 
         # Should raise an error
         assert result.exit_code != 0
+
+
+def test_cli_emits_bcor_idx_by_default(tmp_path):
+    examples = Path(__file__).parents[1] / "examples" / "data"
+    out_prefix = tmp_path / "ld_out"
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "ldcov.cli.main",
+            "--bgen", str(examples / "data.bgen"),
+            "--sample", str(examples / "data.sample"),
+            "--out", str(out_prefix),
+            "--compute-ld",
+            "--output-format", "bcor",
+        ],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "ld_out.bcor").exists()
+    assert (tmp_path / "ld_out.bcor.idx").exists()
+
+
+def test_cli_no_bcor_idx_flag_skips_sidecar(tmp_path):
+    examples = Path(__file__).parents[1] / "examples" / "data"
+    out_prefix = tmp_path / "ld_out"
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "ldcov.cli.main",
+            "--bgen", str(examples / "data.bgen"),
+            "--sample", str(examples / "data.sample"),
+            "--out", str(out_prefix),
+            "--compute-ld",
+            "--output-format", "bcor",
+            "--no-bcor-idx",
+        ],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "ld_out.bcor").exists()
+    assert not (tmp_path / "ld_out.bcor.idx").exists()

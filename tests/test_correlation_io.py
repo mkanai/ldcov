@@ -18,6 +18,7 @@ from pathlib import Path
 from ldcov.io.correlation_io import save_correlation_matrix, load_correlation_matrix, BcorReader
 from ldcov.io.bcor_writer import BcorWriter, save_bcor
 from ldcov.compute.correlation import load_and_adjust_genotypes, compute_correlation_matrix
+from ldcov.io.bcor_index import BcorIndexReader
 
 
 @pytest.fixture(scope="module")
@@ -442,3 +443,103 @@ def test_bcor_reader_nonexistent_file():
     """Test error handling for non-existent BCOR file."""
     with pytest.raises(FileNotFoundError):
         BcorReader("/path/to/nonexistent/file.bcor")
+
+
+def test_save_bcor_emits_index_sidecar_by_default(tmp_path):
+    n = 8
+    corr = np.eye(n) + 0.1
+    np.fill_diagonal(corr, 1.0)
+    corr = (corr + corr.T) / 2
+    np.fill_diagonal(corr, 1.0)
+
+    variant_info = pd.DataFrame({
+        "rsid": [f"rs{1000 - i}" for i in range(n)],  # rsids descend; positions still ascend
+        "chrom": ["1"] * n,
+        "pos": list(range(1, n + 1)),
+        "ref": ["A"] * n,
+        "alt": ["G"] * n,
+    })
+
+    out = tmp_path / "with_idx.bcor"
+    save_bcor(corr, str(out), variant_info=variant_info, n_samples=100)
+
+    idx_path = str(out) + ".idx"
+    assert os.path.exists(idx_path)
+
+    with open(idx_path, "rb") as fh:
+        idx = BcorIndexReader.from_stream(fh, size=os.path.getsize(idx_path))
+
+    assert idx.n_snps == n
+    for i, rsid in enumerate(variant_info["rsid"]):
+        assert idx.rsid_to_row(rsid) == i
+
+
+def test_save_bcor_skips_index_when_write_index_false(tmp_path):
+    n = 3
+    corr = np.eye(n)
+    out = tmp_path / "no_idx.bcor"
+    save_bcor(corr, str(out), n_samples=10, write_index=False)
+    assert os.path.exists(out)
+    assert not os.path.exists(str(out) + ".idx")
+
+
+def test_bcor_idx_meta_offsets_point_to_real_records(tmp_path):
+    """Byte ranges from the sidecar should slice out valid meta records in the .bcor."""
+    n = 5
+    corr = np.eye(n)
+    variant_info = pd.DataFrame({
+        "rsid": [f"variant_{i}" for i in range(n)],
+        "chrom": [str((i % 22) + 1) for i in range(n)],
+        "pos": list(range(100, 100 + n)),
+        "ref": ["A"] * n,
+        "alt": ["T"] * n,
+    })
+
+    out = tmp_path / "check.bcor"
+    save_bcor(corr, str(out), variant_info=variant_info, n_samples=42)
+
+    with open(str(out) + ".idx", "rb") as fh:
+        idx = BcorIndexReader.from_stream(fh)
+
+    with open(out, "rb") as fh:
+        for i in range(n):
+            start, length = idx.meta_byte_range(i)
+            fh.seek(start)
+            rec = fh.read(length)
+            # First 4 bytes = L_buffer; next 4 = index; next 2 = L_rsid; next L_rsid = rsid.
+            L_buffer = int.from_bytes(rec[0:4], "little")
+            # L_buffer does not include the 4 bytes of L_buffer itself.
+            assert len(rec) == L_buffer + 4
+            rsid_len = int.from_bytes(rec[8:10], "little")
+            rsid_bytes = rec[10 : 10 + rsid_len]
+            assert rsid_bytes.decode("utf-8") == variant_info["rsid"].iloc[i]
+
+
+# ==================== Example data sidecar regression test ====================
+
+
+def test_example_data_sidecar_round_trip(test_data):
+    """The example .bcor + .bcor.idx pair under examples/data/ must load and partial-read
+    correctly. Catches regressions in the sidecar format or generator script."""
+    bcor_path = test_data["ref_bcor_file"]
+    idx_path = Path(str(bcor_path) + ".idx")
+    if not idx_path.exists():
+        pytest.skip(
+            "examples/data/data.bcor.idx not present; "
+            "regenerate with: python scripts/make_bcor_idx.py examples/data/data.bcor"
+        )
+
+    reader = BcorReader(str(bcor_path))
+    assert reader.has_index, "sidecar must auto-load"
+    assert reader.index.n_snps == reader.n_snps
+
+    # Round-trip: partial read by rsid must match the full-matrix read.
+    full = reader.read_corr()
+    rsids = ["rs1", "rs5", "rs25", "rs55"]
+    subset, subset_meta = reader.read_corr_by_rsid(rsids)
+    assert list(subset_meta["rsid"]) == rsids
+
+    meta = reader.get_meta()
+    rows = [int(meta.index[meta["rsid"] == r][0]) for r in rsids]
+    expected = full[np.ix_(rows, rows)]
+    np.testing.assert_array_equal(subset, expected)

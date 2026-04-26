@@ -83,6 +83,9 @@ def test_compute_ld_from_standardized(compute_test_data, output_format):
         output_format=output_format,
     )
     assert os.path.exists(output_file)
+    if output_format == "bcor":
+        # Sidecar index is written by default — regression guard for Task 5.
+        assert os.path.exists(f"{output_file}.idx")
 
 
 # ==================== Workflow Tests ====================
