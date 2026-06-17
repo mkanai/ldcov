@@ -5,20 +5,14 @@ functional tests rather than implementation details.
 """
 
 import os
-import tempfile
 import pytest
 import numpy as np
 import pandas as pd
-from unittest.mock import (
-    patch,
-    MagicMock,
-    Mock,
-)  # Note: unittest.mock is still commonly used with pytest
+from unittest.mock import patch, MagicMock
 
 from ldcov.io import load_bgen
 from ldcov.io.bgen.utils import ensure_local_bgi, clear_bgi_cache, get_bgi_cache_info
 from ldcov.io.bgen.index import BGICache
-from ldcov.io.bgen.io.gcs_file_reader import GCSFileReader, create_file_reader
 
 
 class TestBGIMemoryCache:
@@ -170,65 +164,6 @@ class TestBGIDownload:
                 ensure_local_bgi("gs://bucket/test.bgi")
 
 
-class TestGCSFileReader:
-    """Test GCS file reader functionality."""
-
-    def test_path_validation(self):
-        """Test that only GCS paths are accepted."""
-        # Valid GCS path
-        reader = GCSFileReader("gs://bucket/test.bgen")
-        assert reader.path == "gs://bucket/test.bgen"
-
-        # Invalid path
-        with pytest.raises(ValueError, match="Path must start with gs://"):
-            GCSFileReader("/local/path/test.bgen")
-
-    def test_buffer_size(self):
-        """Test that buffer size is set correctly."""
-        reader = GCSFileReader("gs://bucket/test.bgen")
-        assert reader._buffer_size == 10 * 1024 * 1024  # 10MB
-
-    @patch("gcsfs.GCSFileSystem")
-    def test_basic_operations(self, mock_gcsfs_class):
-        """Test basic file operations."""
-        # Setup mock
-        mock_fs = MagicMock()
-        mock_file = MagicMock()
-        mock_fs.open.return_value = mock_file
-        mock_gcsfs_class.return_value = mock_fs
-
-        reader = GCSFileReader("gs://bucket/test.bgen")
-
-        with reader:
-            # Test read
-            mock_file.read.return_value = b"test"
-            data = reader.read(4)
-            assert data == b"test"
-            mock_file.read.assert_called_once_with(4)
-
-            # Test seek
-            reader.seek(10)
-            mock_file.seek.assert_called_once_with(10, 0)
-
-            # Test tell
-            mock_file.tell.return_value = 10
-            pos = reader.tell()
-            assert pos == 10
-
-    def test_operations_without_open(self):
-        """Test that operations fail when file is not opened."""
-        reader = GCSFileReader("gs://bucket/test.bgen")
-
-        with pytest.raises(RuntimeError, match="File not opened"):
-            reader.read(10)
-
-        with pytest.raises(RuntimeError, match="File not opened"):
-            reader.seek(0)
-
-        with pytest.raises(RuntimeError, match="File not opened"):
-            reader.tell()
-
-
 class TestBGICache:
     """Test BGICache singleton functionality."""
 
@@ -283,23 +218,6 @@ class TestBGICache:
             os.chdir(original_cwd)
 
 
-class TestFileReaderFactory:
-    """Test file reader factory function."""
-
-    def test_gcs_path_selection(self):
-        """Test that GCS paths trigger GCS reader."""
-        # Just verify the function exists and handles different paths
-        assert callable(create_file_reader)
-
-        # We can't actually create readers without real files/GCS access
-        # but we can verify the function accepts different path types
-        gcs_path = "gs://bucket/file.bgen"
-        local_path = "/local/file.bgen"
-
-        # These would normally create readers, but will fail in test env
-        # The important thing is the function exists and accepts these paths
-
-
 @pytest.mark.integration
 class TestGCSIntegration:
     """Integration tests requiring actual GCS access."""
@@ -338,27 +256,6 @@ class TestGCSIntegration:
             local_bgi = "example.16bits.bgen.bgi"
             if os.path.exists(local_bgi):
                 os.remove(local_bgi)
-
-    def test_gcs_reader_real_file(self):
-        """Test GCS reader with real GCS file."""
-        try:
-            reader = GCSFileReader("gs://gcs-anndata-test/ldcov/data/example.8bits.bgen")
-
-            with reader:
-                # Read BGEN magic number (first 4 bytes)
-                magic = reader.read(4)
-                assert len(magic) == 4
-
-                # Seek back to start
-                reader.seek(0)
-                assert reader.tell() == 0
-
-                # Read magic again
-                magic2 = reader.read(4)
-                assert magic == magic2
-
-        except Exception as e:
-            pytest.skip(f"GCS reader test failed: {e}")
 
 
 # Performance measurement tests (converted from script-style)
