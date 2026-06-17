@@ -28,6 +28,9 @@ dependencies = [
     "pandas>=1.0.0",
     "gcsfs>=0.7.0",
     "tqdm>=4.50.0",
+    "fsspec>=2021.0.0",
+    "lz4>=3.1.0",
+    "pyarrow>=6.0.0",
 ]
 
 [project.optional-dependencies]
@@ -42,6 +45,7 @@ dev = [
     "zstandard>=0.15.0",  # Required for ZSTD compression tests
     # "bgen @ git+https://github.com/mkanai/bgen.git@278f9b80773ec13fb92ccd7480923e45db92431e",  # Commented out for faster rebuilds
 ]
+s3 = ["s3fs>=2021.0.0"]  # Read BlockMatrix LD (e.g. Pan-UKB) from AWS S3 via fsspec
 
 [project.urls]
 "Homepage" = "https://github.com/mkanai/ldcov"
@@ -68,6 +72,7 @@ line_length = 100
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 python_files = "test_*.py"
 python_functions = "test_*"
 addopts = "-p no:asyncio"

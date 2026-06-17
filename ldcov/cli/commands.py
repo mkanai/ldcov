@@ -15,6 +15,7 @@ from ..compute.correlation import (
     load_and_adjust_genotypes,
     compute_ld_from_standardized,
 )
+from ldcov.ld_bm.cli import add_ld_bm_arguments, run_ld_bm
 
 # Configure logging
 logging.basicConfig(
@@ -109,7 +110,7 @@ Examples:
 
     parser.add_argument(
         "--output-format",
-        choices=["matrix", "long", "bcor"],
+        choices=["matrix", "long", "bcor", "npz", "both"],
         default="matrix",
         help="Output format for LD matrix (default: matrix)",
     )
@@ -148,6 +149,7 @@ Examples:
         "'omit' - remove samples with NaN values (with warnings)",
     )
 
+    add_ld_bm_arguments(parser)
     return parser.parse_args()
 
 
@@ -165,10 +167,17 @@ def validate_args(args):
     ValueError
         If arguments are invalid for the selected options
     """
-    # At least one mode flag must be specified
-    if not args.compute_ld and not args.precompute_projection:
+    # At least one mode flag must be specified (--ld-bm is its own mode, skip this check)
+    if not getattr(args, "ld_bm", False) and not args.compute_ld and not args.precompute_projection:
         raise ValueError(
             "At least one of --compute-ld or --precompute-projection must be specified"
+        )
+
+    # npz/both output formats are only valid for --ld-bm (the BGEN LD flow supports matrix/long/bcor)
+    if not getattr(args, "ld_bm", False) and args.output_format in ("npz", "both"):
+        raise ValueError(
+            f"--output-format {args.output_format} is only valid with --ld-bm; "
+            "use matrix, long, or bcor for --compute-ld"
         )
 
     # Precompute projection requires covariates
@@ -213,6 +222,10 @@ def run_cli():
     output_dir = os.path.dirname(os.path.abspath(args.out))
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
+
+    if getattr(args, "ld_bm", False):
+        run_ld_bm(args)
+        return
 
     # Handle precompute projection mode
     if args.precompute_projection:
