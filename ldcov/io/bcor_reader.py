@@ -505,19 +505,119 @@ class BcorReader:
         dtype = {1: np.uint8, 2: np.uint16, 4: np.uint32, 8: np.uint64}[self._bytes_per_value]
         values = np.frombuffer(buf, dtype=dtype, count=n_values)
 
-        # Vectorized conversion
-        mask = values != self._na_value
-        float_values = np.empty(n_values, dtype=np.float32)
-        float_values[mask] = np.ldexp(values[mask].astype(np.float64), self._shift_bits) - 1.0
-        float_values[~mask] = np.nan
+        # Vectorized conversion: decode every value, then overwrite the NA slots. This
+        # avoids a boolean-mask gather/scatter (values[mask] / float_values[~mask]) over
+        # all ~n^2/2 values; the .any() guard skips the scatter entirely when there is no NA.
+        float_values = (np.ldexp(values.astype(np.float64), self._shift_bits) - 1.0).astype(
+            np.float32
+        )
+        na_mask = values == self._na_value
+        if na_mask.any():
+            float_values[na_mask] = np.nan
 
-        # Fill the upper triangle using vectorized indexing
-        # The writer extracts values using np.triu_indices in row-major order
-        row_indices, col_indices = np.triu_indices(n, k=1)
-        corr[row_indices, col_indices] = float_values
+        # Fill both triangles row-by-row in the writer's row-major upper-triangle order.
+        # Avoids np.triu_indices (two ~n^2 int64 index arrays, ~800MB at n=10k) and the
+        # `corr + corr.T - np.diag(np.diag(corr))` symmetrize (two extra full-matrix temps).
+        # The diagonal was already set above and is left untouched.
+        offset = 0
+        for i in range(n - 1):
+            width = n - i - 1
+            chunk = float_values[offset : offset + width]
+            corr[i, i + 1 :] = chunk  # upper-triangle row i
+            corr[i + 1 :, i] = chunk  # lower-triangle column i (symmetric)
+            offset += width
+        return corr
 
-        # Make symmetric (but preserve diagonal)
-        return corr + corr.T - np.diag(np.diag(corr))
+    def _read_pairs_matrix(
+        self,
+        rows_a,
+        rows_b,
+        range_merge_gap: int = 64 * 1024,
+    ) -> np.ndarray:
+        """Return a float32 matrix M of shape (len(rows_a), len(rows_b)).
+
+        M[i, j] = correlation between SNP rows_a[i] and SNP rows_b[j].
+
+        Uses vectorized triangular-index arithmetic and range-merged batch reads
+        rather than one seek+read per pair.  Diagonal entries are set from
+        self._diagonal_values (extended format) or 1.0 (standard format).
+        """
+        rows_a = np.asarray(rows_a, dtype=np.int64)
+        rows_b = np.asarray(rows_b, dtype=np.int64)
+
+        if rows_a.size == 0 or rows_b.size == 0:
+            return np.zeros((rows_a.size, rows_b.size), dtype=np.float32)
+
+        # Build flattened (ia, jb) index grids — shape (len_a * len_b,)
+        ia, jb = np.meshgrid(rows_a, rows_b, indexing="ij")
+        ia = ia.ravel()
+        jb = jb.ravel()
+
+        diag_mask = ia == jb
+        off_mask = ~diag_mask
+
+        base = self._corr_data_offset if self._is_extended else self._corr_block_offset
+        bpv = self._bytes_per_value
+        n = self._n_snps
+
+        # Compute byte offsets for all off-diagonal pairs (vectorized)
+        off_ia = ia[off_mask]
+        off_jb = jb[off_mask]
+        lo = np.minimum(off_ia, off_jb)
+        hi = np.maximum(off_ia, off_jb)
+        tri_idx = lo * n - (lo * (lo + 1)) // 2 + (hi - lo - 1)
+        byte_offsets = base + tri_idx.astype(np.int64) * bpv
+
+        # Batch-fetch with range merging
+        unique_offsets = np.unique(byte_offsets)
+        merged = _merge_ranges(unique_offsets, bpv, range_merge_gap)
+        raw_chunks = self._handle.read_ranges([(off, length) for off, length in merged])
+
+        dtype = {1: np.uint8, 2: np.uint16, 4: np.uint32, 8: np.uint64}[bpv]
+        chunk_arrays = []
+        chunk_starts_list = []
+        for (chunk_off, chunk_len), chunk in zip(merged, raw_chunks):
+            arr = np.frombuffer(chunk, dtype=dtype, count=chunk_len // bpv)
+            chunk_starts_list.append(chunk_off)
+            chunk_arrays.append(arr)
+
+        result = np.empty((rows_a.size, rows_b.size), dtype=np.float32)
+        flat_result = result.ravel()
+
+        # Set diagonal entries
+        if self._is_extended:
+            flat_result[diag_mask] = self._diagonal_values[ia[diag_mask]]
+        else:
+            flat_result[diag_mask] = 1.0
+
+        if off_mask.any():
+            # off_mask.any() implies byte_offsets (and thus chunk_arrays) is non-empty.
+            # Vectorized gather: map each off-diagonal byte offset to its merged chunk and
+            # intra-chunk element index via searchsorted — same asymptotic cost as the old
+            # per-pair bisect, but eliminates one Python call per pair.
+            flat_chunks = np.concatenate(chunk_arrays)
+            chunk_starts_arr = np.asarray(chunk_starts_list, dtype=np.int64)
+            chunk_sizes = np.asarray([a.size for a in chunk_arrays], dtype=np.int64)
+            cum_sizes = np.zeros(len(chunk_arrays) + 1, dtype=np.int64)
+            np.cumsum(chunk_sizes, out=cum_sizes[1:])
+
+            ci = np.searchsorted(chunk_starts_arr, byte_offsets, side="right") - 1
+            intra = (byte_offsets - chunk_starts_arr[ci]) // bpv
+            flat_idx = cum_sizes[ci] + intra
+            raw_vals = flat_chunks[flat_idx]  # still in original unsigned dtype
+
+            # Compare NA mask in the original unsigned dtype before any cast.
+            # For 8-byte compression the NA value overflows int64, so we must NOT
+            # convert to int64 before the equality check (mirrors _read_full_matrix).
+            na_mask = raw_vals == self._na_value
+            decoded = (np.ldexp(raw_vals.astype(np.float64), self._shift_bits) - 1.0).astype(
+                np.float32
+            )
+            if na_mask.any():
+                decoded[na_mask] = np.nan
+            flat_result[off_mask] = decoded
+
+        return result
 
     def read_corr(self, snps1: List[int] = None, snps2: List[int] = None) -> np.ndarray:
         """
@@ -555,35 +655,19 @@ class BcorReader:
             return self._read_full_matrix()
 
         elif len(snps2) == 0:
-            # Read specific rows
-            corr = np.zeros([self._n_snps, len(snps1)], dtype=np.float32)
-            for i, snp_x in enumerate(snps1):
-                # Read all row values
-                for snp_y in range(self._n_snps):
-                    if snp_x == snp_y:
-                        # Handle diagonal
-                        if self._is_extended:
-                            corr[snp_y, i] = self._diagonal_values[snp_x]
-                        else:
-                            corr[snp_y, i] = 1.0
-                    else:
-                        corr[snp_y, i] = self._read_corr_pair(snp_x, snp_y, seek=True)
-            return corr
+            # Read specific rows: full columns for the given row indices.
+            # Returns shape (n_snps, len(snps1)) where [snp_y, i] = corr(snp_y, snps1[i]).
+            # NOTE: this materializes a dense (n_snps x len(snps1)) index grid. The output
+            # itself is n_snps x len(snps1); for a very large n_snps prefer the explicit
+            # read_corr(snps1, snps2) form to bound the grid to the requested submatrix.
+            rows_all = np.arange(self._n_snps, dtype=np.int64)
+            return self._read_pairs_matrix(rows_all, np.asarray(snps1, dtype=np.int64))
 
         else:
-            # Read specific pairs
-            corr = np.zeros([len(snps1), len(snps2)], dtype=np.float32)
-            for i, snp_x in enumerate(snps1):
-                for j, snp_y in enumerate(snps2):
-                    if snp_x == snp_y:
-                        # Handle diagonal
-                        if self._is_extended:
-                            corr[i, j] = self._diagonal_values[snp_x]
-                        else:
-                            corr[i, j] = 1.0
-                    else:
-                        corr[i, j] = self._read_corr_pair(snp_x, snp_y, seek=True)
-            return corr
+            # Read specific pairs: shape (len(snps1), len(snps2)).
+            return self._read_pairs_matrix(
+                np.asarray(snps1, dtype=np.int64), np.asarray(snps2, dtype=np.int64)
+            )
 
     def read_corr_by_rsid(
         self,
@@ -634,71 +718,8 @@ class BcorReader:
 
         rows_a_arr = np.asarray(rows_a, dtype=np.int64)
         rows_b_arr = np.asarray(rows_b, dtype=np.int64)
-        ia, jb = np.meshgrid(rows_a_arr, rows_b_arr, indexing="ij")
-        ia = ia.ravel()
-        jb = jb.ravel()
 
-        diag_mask = ia == jb
-        off_mask = ~diag_mask
-
-        base = self._corr_data_offset if self._is_extended else self._corr_block_offset
-        bpv = self._bytes_per_value
-
-        off_ia = ia[off_mask]
-        off_jb = jb[off_mask]
-        lo = np.minimum(off_ia, off_jb)
-        hi = np.maximum(off_ia, off_jb)
-        n = self._n_snps
-        tri_idx = lo * n - (lo * (lo + 1)) // 2 + (hi - lo - 1)
-        byte_offsets = base + tri_idx.astype(np.int64) * bpv
-
-        unique_offsets = np.unique(byte_offsets)
-        merged = _merge_ranges(unique_offsets, bpv, range_merge_gap)
-
-        raw_chunks = self._handle.read_ranges([(off, length) for off, length in merged])
-
-        dtype = {1: np.uint8, 2: np.uint16, 4: np.uint32, 8: np.uint64}[bpv]
-        chunk_starts = []  # parallel to chunk_arrays; sorted ascending
-        chunk_arrays = []
-        for (chunk_off, chunk_len), chunk in zip(merged, raw_chunks):
-            arr = np.frombuffer(chunk, dtype=dtype, count=chunk_len // bpv)
-            chunk_starts.append(chunk_off)
-            chunk_arrays.append(arr)
-
-        def _value_at(off: int) -> int:
-            # bisect into sorted chunk_starts: O(log M) instead of O(M).
-            i = bisect.bisect_right(chunk_starts, off) - 1
-            if i >= 0:
-                chunk_off = chunk_starts[i]
-                arr = chunk_arrays[i]
-                idx = (off - chunk_off) // bpv
-                if 0 <= idx < arr.size:
-                    return int(arr[idx])
-            raise AssertionError(
-                f"byte offset {off} not found in any merged chunk; this is a bug in _merge_ranges"
-            )
-
-        result = np.empty((len(rows_a), len(rows_b)), dtype=np.float32)
-        flat_result = result.ravel()
-
-        if self._is_extended:
-            flat_result[diag_mask] = self._diagonal_values[ia[diag_mask]]
-        else:
-            flat_result[diag_mask] = 1.0
-
-        # Vectorized decode: build int_vals via per-pair bisect lookup, then dequantize
-        # with np.ldexp in one shot. Matches the strategy used by _read_full_matrix.
-        int_vals = np.fromiter(
-            (_value_at(int(off)) for off in byte_offsets),
-            dtype=np.int64,
-            count=byte_offsets.shape[0],
-        )
-        na_mask = int_vals == self._na_value
-        decoded = np.empty(int_vals.shape[0], dtype=np.float64)
-        decoded[~na_mask] = np.ldexp(int_vals[~na_mask], self._shift_bits) - 1.0
-        decoded[na_mask] = np.nan
-        flat_result[off_mask] = decoded.astype(np.float32)
-
+        result = self._read_pairs_matrix(rows_a_arr, rows_b_arr, range_merge_gap=range_merge_gap)
         subset_meta = self._subset_meta(rows_a_arr, range_merge_gap=range_merge_gap)
         return result, subset_meta
 

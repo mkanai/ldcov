@@ -452,13 +452,15 @@ def test_save_bcor_emits_index_sidecar_by_default(tmp_path):
     corr = (corr + corr.T) / 2
     np.fill_diagonal(corr, 1.0)
 
-    variant_info = pd.DataFrame({
-        "rsid": [f"rs{1000 - i}" for i in range(n)],  # rsids descend; positions still ascend
-        "chrom": ["1"] * n,
-        "pos": list(range(1, n + 1)),
-        "ref": ["A"] * n,
-        "alt": ["G"] * n,
-    })
+    variant_info = pd.DataFrame(
+        {
+            "rsid": [f"rs{1000 - i}" for i in range(n)],  # rsids descend; positions still ascend
+            "chrom": ["1"] * n,
+            "pos": list(range(1, n + 1)),
+            "ref": ["A"] * n,
+            "alt": ["G"] * n,
+        }
+    )
 
     out = tmp_path / "with_idx.bcor"
     save_bcor(corr, str(out), variant_info=variant_info, n_samples=100)
@@ -487,13 +489,15 @@ def test_bcor_idx_meta_offsets_point_to_real_records(tmp_path):
     """Byte ranges from the sidecar should slice out valid meta records in the .bcor."""
     n = 5
     corr = np.eye(n)
-    variant_info = pd.DataFrame({
-        "rsid": [f"variant_{i}" for i in range(n)],
-        "chrom": [str((i % 22) + 1) for i in range(n)],
-        "pos": list(range(100, 100 + n)),
-        "ref": ["A"] * n,
-        "alt": ["T"] * n,
-    })
+    variant_info = pd.DataFrame(
+        {
+            "rsid": [f"variant_{i}" for i in range(n)],
+            "chrom": [str((i % 22) + 1) for i in range(n)],
+            "pos": list(range(100, 100 + n)),
+            "ref": ["A"] * n,
+            "alt": ["T"] * n,
+        }
+    )
 
     out = tmp_path / "check.bcor"
     save_bcor(corr, str(out), variant_info=variant_info, n_samples=42)
@@ -543,3 +547,37 @@ def test_example_data_sidecar_round_trip(test_data):
     rows = [int(meta.index[meta["rsid"] == r][0]) for r in rsids]
     expected = full[np.ix_(rows, rows)]
     np.testing.assert_array_equal(subset, expected)
+
+
+def test_bcor_writer_nan_roundtrip_optimized_encoder(tmp_path):
+    """Off-band NaN cells (used by --ld-bm) must survive the bcor encode/decode round-trip."""
+    import numpy as np
+    import pandas as pd
+    from ldcov.io.bcor_writer import save_bcor
+    from ldcov.io.bcor_reader import BcorReader
+
+    n = 12
+    rng = np.random.default_rng(0)
+    m = rng.uniform(-1, 1, (n, n))
+    m = (m + m.T) / 2
+    np.fill_diagonal(m, 1.0)
+    # Punch some NaNs off-diagonal (symmetric), like off-band pairs.
+    for i, j in [(0, 5), (2, 9), (7, 11)]:
+        m[i, j] = m[j, i] = np.nan
+
+    vi = pd.DataFrame(
+        {
+            "rsid": [f"v{i}" for i in range(n)],
+            "chrom": ["1"] * n,
+            "pos": range(n),
+            "ref": ["A"] * n,
+            "alt": ["G"] * n,
+        }
+    )
+    out = str(tmp_path / "nan.bcor")
+    save_bcor(m, out, variant_info=vi, compression=1, write_index=False)
+    back = BcorReader(out).read_corr()
+
+    nan_mask = np.isnan(m)
+    assert np.array_equal(np.isnan(back), nan_mask)  # NaNs preserved exactly
+    np.testing.assert_allclose(back[~nan_mask], m[~nan_mask], atol=1e-4)  # values preserved
