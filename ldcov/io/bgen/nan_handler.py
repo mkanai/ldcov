@@ -8,6 +8,7 @@ This module provides different strategies for handling NaN values in genotype ma
 - warn: Issue a warning but preserve NaN values in the data
 """
 
+import warnings
 import numpy as np
 import pandas as pd
 from typing import Tuple, List
@@ -84,27 +85,25 @@ def _impute_nan_with_mean(
         f"Imputing with variant-wise mean."
     )
 
-    # Create a copy to avoid modifying original
-    imputed_dosages = dosages.copy()
+    # Per-variant (column) mean of non-NaN values, in one vectorized pass instead of a
+    # Python loop + np.nanmean + boolean scatter per variant. (All-NaN columns yield NaN;
+    # the RuntimeWarning is suppressed and handled explicitly below.)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        col_means = np.nanmean(dosages, axis=0)
 
-    # Impute variant by variant
-    for j in range(dosages.shape[1]):
-        if np.any(nan_mask[:, j]):
-            # Calculate mean excluding NaN values
-            variant_mean = np.nanmean(dosages[:, j])
+    # Variants that are entirely NaN: warn (in column order) and impute with 0 — matching
+    # the original per-variant behavior.
+    for j in np.nonzero(np.isnan(col_means))[0]:
+        logger.warning(
+            f"Variant {variant_info.iloc[int(j)]['rsid']} at position "
+            f"{variant_info.iloc[int(j)]['pos']} has all NaN values. Imputing with 0."
+        )
+    col_means = np.nan_to_num(col_means, nan=0.0)
 
-            # If all values are NaN for this variant, use 0
-            if np.isnan(variant_mean):
-                variant_rsid = variant_info.iloc[j]["rsid"]
-                variant_pos = variant_info.iloc[j]["pos"]
-                logger.warning(
-                    f"Variant {variant_rsid} at position {variant_pos} has all NaN values. "
-                    f"Imputing with 0."
-                )
-                variant_mean = 0.0
-
-            # Impute NaN values with mean
-            imputed_dosages[nan_mask[:, j], j] = variant_mean
+    # Impute NaN cells with their column mean; leave everything else unchanged. Casting the
+    # means to the dosage dtype preserves the original array dtype (e.g. float32).
+    imputed_dosages = np.where(nan_mask, col_means.astype(dosages.dtype, copy=False), dosages)
 
     return imputed_dosages, variant_info, sample_ids
 

@@ -106,49 +106,42 @@ def save_correlation_matrix(
             else:
                 f.write("#VAR1\tVAR2\tR\n")
 
-            # Write correlation values with buffering
+            # Write correlation values one ROW-BAND at a time (upper triangle, row-major).
+            # Each row's pairs are formatted with vectorized numpy string ops instead of an
+            # O(n^2) Python double-loop over individual f-strings: np.char.mod("%.6f", ...)
+            # for the R column (byte-identical to f"{r:.6f}", incl. nan / -0.0) and numpy
+            # string concatenation for the rest. Only one row of strings is held at a time,
+            # so this is memory-safe at large n (a full 50M-row DataFrame would OOM).
             n_variants = corr_matrix.shape[0]
-            buffer = []
-            buffer_size = 10000  # Write in chunks of 10K lines
 
             if variant_info is not None:
-                # Pre-extract variant info arrays for faster access
-                chroms = variant_info["chrom"].values
-                positions = variant_info["pos"].values
-                ids = variant_info["rsid"].values
-                refs = variant_info["ref"].values
-                alts = variant_info["alt"].values
-
-                for i in range(n_variants):
-                    for j in range(i + 1, n_variants):  # Upper triangle only
-                        r = corr_matrix[i, j]
-
-                        line = (
-                            f"{chroms[i]}\t{positions[i]}\t{ids[i]}\t{refs[i]}\t{alts[i]}\t"
-                            f"{chroms[j]}\t{positions[j]}\t{ids[j]}\t{refs[j]}\t{alts[j]}\t"
-                            f"{r:.6f}\n"
-                        )
-                        buffer.append(line)
-
-                        if len(buffer) >= buffer_size:
-                            f.writelines(buffer)
-                            buffer.clear()
+                chroms = variant_info["chrom"].astype(str).to_numpy()
+                positions = variant_info["pos"].astype(str).to_numpy()
+                ids = variant_info["rsid"].astype(str).to_numpy()
+                refs = variant_info["ref"].astype(str).to_numpy()
+                alts = variant_info["alt"].astype(str).to_numpy()
+                # Per-variant field block "chrom\tpos\trsid\tref\talt\t", built once.
+                prefixes = np.array(
+                    [
+                        f"{chroms[k]}\t{positions[k]}\t{ids[k]}\t{refs[k]}\t{alts[k]}\t"
+                        for k in range(n_variants)
+                    ]
+                )
+                for i in range(n_variants - 1):
+                    r_strs = np.char.mod("%.6f", corr_matrix[i, i + 1 :])
+                    # np.char.add throughout: the `+` ufunc has no string-concat loop on
+                    # older numpy (Python 3.8), unlike np.char.add.
+                    row = np.char.add(prefixes[i], prefixes[i + 1 :])
+                    lines = np.char.add(np.char.add(row, r_strs), "\n")
+                    f.write("".join(lines.tolist()))
             else:
-                # Use numpy to get upper triangle indices
-                row_indices, col_indices = np.triu_indices(n_variants, k=1)
-
-                for idx in range(len(row_indices)):
-                    i, j = row_indices[idx], col_indices[idx]
-                    r = corr_matrix[i, j]
-                    buffer.append(f"{i}\t{j}\t{r:.6f}\n")
-
-                    if len(buffer) >= buffer_size:
-                        f.writelines(buffer)
-                        buffer.clear()
-
-            # Write remaining buffer
-            if buffer:
-                f.writelines(buffer)
+                idx_strs = np.arange(n_variants).astype(str)
+                for i in range(n_variants - 1):
+                    r_strs = np.char.mod("%.6f", corr_matrix[i, i + 1 :])
+                    row = np.char.add(str(i) + "\t", idx_strs[i + 1 :])
+                    row = np.char.add(np.char.add(row, "\t"), r_strs)
+                    lines = np.char.add(row, "\n")
+                    f.write("".join(lines.tolist()))
 
 
 def load_correlation_matrix(

@@ -53,8 +53,10 @@ def standardize_genotypes(
 
     # Calculate L2 norms (sqrt of sum of squares) for scaling
     if scale:
-        # Calculate norm (sqrt of sum of squares for each column)
-        norms = np.sqrt(np.sum(standardized_genotypes**2, axis=0))
+        # Column L2 norms via einsum: fuses the square and the column reduction into a
+        # single pass with NO N x V temporary. `np.sum(G**2)` would allocate a full-size
+        # copy of the genotype matrix (e.g. 40 GB at N=500k, V=10k) just to reduce it.
+        norms = np.sqrt(np.einsum("ij,ij->j", standardized_genotypes, standardized_genotypes))
 
         # Avoid division by zero for variants with no variance
         norms[norms == 0] = 1.0
@@ -283,29 +285,18 @@ def _apply_fwl_projection(G: np.ndarray, X: np.ndarray) -> np.ndarray:
         logger.warning("Falling back to pseudoinverse method")
 
         try:
-            # Fallback: Use pseudoinverse (Moore-Penrose) which is more robust
-            # P_X = X @ pinv(X'X) @ X'
-            # Residual: (I - P_X)G
-
-            # Compute pseudoinverse
-            XtX = X.T @ X
-            XtX_pinv = np.linalg.pinv(XtX, rcond=1e-10)
-
-            # Check for numerical issues
-            if np.any(np.isnan(XtX_pinv)) or np.any(np.isinf(XtX_pinv)):
-                raise ValueError("Pseudoinverse calculation failed")
-
-            # Compute projection matrix
-            P_X = X @ XtX_pinv @ X.T
-
-            # Apply projection
-            G -= P_X @ G
+            # Fallback: least-squares residualization. This computes the same FWL residual
+            # (I - P_X) G = G - X (X^+ G) but WITHOUT ever materializing the N x N projection
+            # matrix P_X = X pinv(X'X) X' (e.g. 20 GB at N=50k, 2 TB at N=500k -> OOM). lstsq
+            # is rank-robust via rcond and projects onto the column space of X just as pinv does.
+            coeffs, _, _, _ = np.linalg.lstsq(X, G, rcond=1e-10)  # C x V
+            G -= X @ coeffs  # N x C @ C x V = N x V, no N x N intermediate
 
             # Final check
             if np.any(np.isnan(G)):
-                raise ValueError("Pseudoinverse method also resulted in NaN values")
+                raise ValueError("Least-squares fallback also resulted in NaN values")
 
-            logger.info("Successfully applied FWL projection using pseudoinverse method")
+            logger.info("Successfully applied FWL projection using least-squares fallback")
             return G
 
         except Exception as fallback_error:
