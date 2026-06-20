@@ -4,17 +4,12 @@ A Python package for efficient linkage disequilibrium (LD) calculation with cova
 
 ## Key Features
 
-- **BGEN format support**: Efficient reading of BGEN v1.1/v1.2 files with mandatory BGI index
-- **Covariate adjustment**: Remove confounding effects using Frisch-Waugh-Lovell (FWL) projection
-- **Pre-computed projection matrices**: Compute QR decomposition once, reuse across multiple analyses
-- **Flexible LD computation**: With or without covariate adjustment
-- **Z-file support**: Filter and order variants based on external variant lists
-- **Region filtering**: Process specific genomic regions
-- **Cloud storage support**: Load BGEN files and covariates directly from Google Cloud Storage (gs://)
-- **Optimized for large datasets**: Efficient memory usage and computation
-- **GCS BGEN reading**: Stream BGEN files from Google Cloud Storage without downloading
-- **BCOR index (`.bcor.idx`)**: Auto-emitted alongside `.bcor` outputs to enable O(1) rsid lookups and partial reads (including over GCS) without scanning metadata
-- **Hail BlockMatrix LD extraction (`--ld-bm`)**: Read a partial submatrix of a Hail `BlockMatrix` LD store (e.g. gnomAD on GCS, Pan-UKB on AWS S3) in pure Python — no Hail/Spark — and export `.bcor` / `.npz`, selected by region, z-file, or index range (see [below](#extracting-ld-from-a-hail-blockmatrix---ld-bm))
+- **BGEN format support**: Efficient reading of BGEN v1.1/v1.2 files with mandatory BGI index, including streaming directly from Google Cloud Storage (gs://) without downloading
+- **Covariate adjustment**: Remove confounding effects via Frisch-Waugh-Lovell (FWL) projection, with optional pre-computed projection matrices (compute the QR decomposition once, reuse across analyses)
+- **Flexible LD computation**: With or without covariate adjustment, optionally filtered and ordered by a z-file or restricted to a genomic region
+- **Multiple output formats**: tab-delimited matrix, gzipped long format, or binary `.bcor`
+- **BCOR index (`.bcor.idx`)**: Auto-emitted alongside `.bcor` outputs for O(1) rsid lookups and partial reads (including over GCS) without scanning metadata
+- **Hail BlockMatrix LD extraction (`--ld-bm`)**: Read a partial submatrix of a Hail `BlockMatrix` LD store (e.g. gnomAD on GCS, Pan-UKB on AWS S3) in pure Python (no Hail/Spark) and export `.bcor` / `.npz`, selected by region, z-file, or index range (see [below](#extracting-ld-from-a-hail-blockmatrix---ld-bm))
 
 ## Installation
 
@@ -91,7 +86,7 @@ ldcov --bgen gs://bucket/data.bgen -c gs://bucket/covariates.txt --compute-ld --
 
 **Requirements**:
 
-- Install gcsfs: `pip install gcsfs` (included in dependencies)
+- gcsfs (installed as a dependency)
 - BGI index files (`.bgen.bgi`) must exist alongside BGEN files on GCS
 - Appropriate GCS credentials configured (via gcloud, service account, etc.)
 
@@ -163,15 +158,15 @@ Based on the flags used, ldcov will create:
 
 ### BCOR Index
 
-When `--output-format bcor` is selected, ldcov also writes a small `.bcor.idx` index file that maps rsid → row and records per-variant byte offsets. This lets `BcorReader` resolve rsid-based queries without scanning the variable-length metadata block, which matters most when reading remote files:
+When `--output-format bcor` is selected, ldcov also writes a small `.bcor.idx` index file that maps rsid to row and records per-variant byte offsets. This lets `BcorReader` resolve rsid-based queries without scanning the variable-length metadata block, which matters most when reading remote files:
 
 ```python
 from ldcov.io import BcorReader
 
-# Local or gs:// — same API. The .bcor.idx auto-loads if present alongside the .bcor.
+# Local or gs://, same API. The .bcor.idx auto-loads if present alongside the .bcor.
 reader = BcorReader("gs://bucket/study.bcor")
 
-# Partial read by rsid — fetches only the bytes needed (range-merged, parallelized for GCS).
+# Partial read by rsid, fetching only the bytes needed (range-merged, parallelized for GCS).
 subset, meta = reader.read_corr_by_rsid(["rs1234", "rs5678", "rs9012"])
 
 # Two-list (asymmetric) query.
@@ -185,107 +180,6 @@ python scripts/make_bcor_idx.py path/to/file.bcor
 ```
 
 The index binds to its parent `.bcor` via a header-level fingerprint, so stale or truncated pairs are detected at load time and the reader falls back gracefully.
-
-## Extracting LD from a Hail BlockMatrix (`--ld-bm`)
-
-Read a submatrix of a Hail `BlockMatrix` LD store (e.g. gnomAD) directly from cloud storage —
-no Hail/Spark — and export it as `.bcor` (+ a `.variants.tsv` and optional `.npz`).
-
-### One-time: build the variant index
-
-The variant↔matrix-index mapping lives in the matrix's companion `variant_indices.ht`. Convert it
-once to a Parquet variant index on a machine with Hail installed:
-
-```bash
-python scripts/make_bm_variant_index.py \
-    --ht gs://gcp-public-data--gnomad/release/2.1.1/ld/gnomad.genomes.r2.1.1.nfe.common.adj.ld.variant_indices.ht \
-    --out gnomad_nfe.variant_index.parquet
-```
-
-The builder fails loudly on any multiallelic/monomorphic variant (LD matrices require split variants).
-
-### Extract by region, z-file, or idx-range
-
-```bash
-# Genomic region
-ldcov --ld-bm \
-    --bm gs://gcp-public-data--gnomad/release/2.1.1/ld/gnomad.genomes.r2.1.1.nfe.common.adj.ld.bm \
-    --variant-index gnomad_nfe.variant_index.parquet \
-    --region 1:55000000-55100000 \
-    --out region
-
-# FINEMAP/SuSiE z-file (variants matched by locus+alleles; swapped alleles are sign-flipped).
-# z-file allele convention (same as the rest of ldcov): allele1 = ref, allele2 = alt.
-ldcov --ld-bm --bm gs://.../...ld.bm --variant-index gnomad_nfe.variant_index.parquet \
-    --z mystudy.z --out study --output-format both
-
-# Explicit BlockMatrix index range
-ldcov --ld-bm --bm gs://.../...ld.bm --variant-index gnomad_nfe.variant_index.parquet \
-    --idx-range 5000:5500 --out slice
-```
-
-Outputs: `PREFIX.bcor` (+ `.bcor.idx`), `PREFIX.variants.tsv` (matrix-row order, with `flipped` /
-matched columns), and `PREFIX.npz` when `--output-format npz|both`. Pairs outside the matrix's stored
-band are filled with `NaN` (or `0` with `--fill zero`) and reported.
-
-The needed blocks are fetched concurrently from cloud storage; tune with `--fetch-workers N`
-(default 4) and `--block-cache N` (decoded-block LRU, default 4). For unmatched z-file variants,
-`--on-missing {warn,error,drop}` controls the behavior. A ~10K-variant (3 Mb) region exports to
-`.bcor` in a few seconds.
-
-### Pan-UKB LD on AWS S3
-
-The [Pan-UKB](https://pan.ukbb.broadinstitute.org/) LD matrices are public Hail BlockMatrices on S3
-in the same format. Install the S3 extra, build a variant index from the population's .variant.ht, then
-extract as usual:
-
-```bash
-pip install "ldcov[s3]"        # or: uv pip install -e ".[s3]"
-
-# One-time variant index (needs Hail). GRCh37 index -> .variant.ht; GRCh38 (liftover) -> .variant.b38.ht.
-python scripts/make_bm_variant_index.py \
-    --ht s3://pan-ukb-us-east-1/ld_release/UKBB.EUR.ldadj.variant.ht \
-    --out UKBB.EUR.variant_index.parquet
-
-# Extract (s3:// is read anonymously by default)
-ldcov --ld-bm \
-    --bm s3://pan-ukb-us-east-1/ld_release/UKBB.EUR.ldadj.bm \
-    --variant-index UKBB.EUR.variant_index.parquet \
-    --region 1:55000000-55100000 \
-    --out panukb_eur
-```
-
-> **Variant-index builder & S3:** `make_bm_variant_index.py` runs on Hail/Spark, and `ldcov`'s
-> anonymous-S3 plumbing only covers the *runtime* read path — not Hail. To read the variant `.ht`
-> directly from `s3://`, the Hail session must be configured for S3; for the public Pan-UKB bucket
-> use anonymous access, e.g.
-> `--ht s3a://...` with Spark conf
-> `spark.hadoop.fs.s3a.aws.credentials.provider=org.apache.hadoop.fs.s3a.AnonymousAWSCredentialsProvider`.
-> If your Hail environment isn't set up for S3, point `--ht` at a local copy of the `.ht` instead.
-> Only this one-time step needs Hail/S3 config; the extract step below reads the BlockMatrix
-> anonymously without Hail.
-
-Populations: `{EUR, AFR, AMR, CSA, EAS, MID}` (substitute for `EUR` above). Choose the variant
-index whose build matches your z-file / region coordinates: `.variant.ht` is GRCh37 (contigs like
-`1`), `.variant.b38.ht` is GRCh38 (contigs like `chr1`).
-
-Public-bucket reads are anonymous by default. To use credentials, a custom endpoint, or
-requester-pays, pass `--storage-options` as a JSON dict, e.g.
-`--storage-options '{}'` to force the normal AWS credential chain, or
-`--storage-options '{"key": "AKIA...", "secret": "..."}'`.
-
-### Python API (BlockMatrix)
-
-```python
-from ldcov.ld_bm import extract_ld
-
-matrix, variants = extract_ld(
-    bm_path="gs://.../...ld.bm",
-    variant_index_path="gnomad_nfe.variant_index.parquet",
-    region="1:55000000-55100000",
-    out="region",
-)
-```
 
 ### Python API
 
@@ -332,6 +226,124 @@ adjusted = ldcov.regress_out_covariates(
 )
 ```
 
+## Extracting LD from a Hail BlockMatrix (`--ld-bm`)
+
+Read a submatrix of a Hail `BlockMatrix` LD store (e.g. gnomAD) directly from cloud storage
+(no Hail/Spark) and export it as `.bcor` (plus a `.variants.tsv` and optional `.npz`).
+
+### One-time: build the variant index
+
+The variant-to-matrix-index mapping lives in the matrix's companion `variant_indices.ht`. Convert it
+once to a Parquet variant index on a machine with Hail installed:
+
+```bash
+python scripts/make_bm_variant_index.py \
+    --ht gs://gcp-public-data--gnomad/release/2.1.1/ld/gnomad.genomes.r2.1.1.nfe.common.adj.ld.variant_indices.ht \
+    --out gnomad_v2.nfe.b37.variant_index.parquet
+```
+
+The builder fails loudly on any multiallelic/monomorphic variant (LD matrices require split variants).
+
+### Pre-computed variant indexes (gnomAD and Pan-UKB)
+
+To skip the one-time Hail step, pre-computed variant indexes for the gnomAD and Pan-UKB LD matrices
+are hosted at `gs://ldcov-requester-pays/`. The bucket is requester-pays, so reads are billed to your
+own project (pass `--billing-project YOUR_PROJECT` to `gcloud storage`). Both individual Parquet files
+and per-dataset `.tar.gz` bundles are available:
+
+```bash
+# List what's available
+gcloud storage ls -r gs://ldcov-requester-pays/ --billing-project YOUR_PROJECT
+
+# Download a single variant index (named <dataset>.<pop>.<build>.variant_index.parquet)
+gcloud storage cp gs://ldcov-requester-pays/gnomad_v2.nfe.b37.variant_index.parquet . \
+    --billing-project YOUR_PROJECT
+
+# Or grab a whole dataset as a tar.gz bundle
+gcloud storage cp gs://ldcov-requester-pays/bundles/gnomad_v2.b37.variant_index.tar.gz . \
+    --billing-project YOUR_PROJECT
+tar -xzf gnomad_v2.b37.variant_index.tar.gz
+```
+
+Per-dataset bundles:
+
+- gnomAD GRCh37: `gs://ldcov-requester-pays/bundles/gnomad_v2.b37.variant_index.tar.gz`
+- gnomAD GRCh38: `gs://ldcov-requester-pays/bundles/gnomad_v2.b38.variant_index.tar.gz`
+- Pan-UKB GRCh37: `gs://ldcov-requester-pays/bundles/panukb.b37.variant_index.tar.gz`
+- Pan-UKB GRCh38: `gs://ldcov-requester-pays/bundles/panukb.b38.variant_index.tar.gz`
+
+Indexes come in `b37` (GRCh37) and `b38` (GRCh38) builds; pick the one matching your z-file / region
+coordinates. gnomAD populations: `{afr, amr, asj, eas, est, fin, nfe, nwe, seu}`. Pan-UKB populations:
+`{AFR, AMR, CSA, EAS, EUR, MID}`. Point `--variant-index` at the downloaded Parquet; no Hail install
+required.
+
+### Extract by region, z-file, or idx-range
+
+```bash
+# Genomic region
+ldcov --ld-bm \
+    --bm gs://gcp-public-data--gnomad/release/2.1.1/ld/gnomad.genomes.r2.1.1.nfe.common.adj.ld.bm \
+    --variant-index gnomad_v2.nfe.b37.variant_index.parquet \
+    --region 1:55000000-55100000 \
+    --out region
+
+# FINEMAP/SuSiE z-file (variants matched by locus+alleles; swapped alleles are sign-flipped).
+ldcov --ld-bm \
+    --bm gs://gcp-public-data--gnomad/release/2.1.1/ld/gnomad.genomes.r2.1.1.nfe.common.adj.ld.bm \
+    --variant-index gnomad_v2.nfe.b37.variant_index.parquet \
+    --z mystudy.z --out study --output-format both
+
+# Explicit BlockMatrix index range
+ldcov --ld-bm \
+    --bm gs://gcp-public-data--gnomad/release/2.1.1/ld/gnomad.genomes.r2.1.1.nfe.common.adj.ld.bm \
+    --variant-index gnomad_v2.nfe.b37.variant_index.parquet \
+    --idx-range 5000:5500 --out slice
+```
+
+Outputs: `PREFIX.bcor` (+ `.bcor.idx`), `PREFIX.variants.tsv` (matrix-row order, with `flipped` /
+matched columns), and `PREFIX.npz` when `--output-format npz|both`. Pairs outside the matrix's stored
+band are filled with `NaN` (or `0` with `--fill zero`) and reported.
+
+The needed blocks are fetched concurrently from cloud storage; tune with `--fetch-workers N`
+(default 4) and `--block-cache N` (decoded-block LRU, default 4). For unmatched z-file variants,
+`--on-missing {warn,error,drop}` controls the behavior. A ~10K-variant (3 Mb) region exports to
+`.bcor` in a few seconds.
+
+### Pan-UKB LD on AWS S3
+
+The [Pan-UKB](https://pan.ukbb.broadinstitute.org/) LD matrices are public Hail BlockMatrices on S3
+in the same format. Reading `s3://` requires the S3 extra; pair it with a pre-computed Pan-UKB variant
+index (above) and extract as usual:
+
+```bash
+pip install "ldcov[s3]"
+
+# Extract (s3:// is read anonymously by default)
+ldcov --ld-bm \
+    --bm s3://pan-ukb-us-east-1/ld_release/UKBB.EUR.ldadj.bm \
+    --variant-index panukb.EUR.b37.variant_index.parquet \
+    --region 1:55000000-55100000 \
+    --out panukb_eur
+```
+
+Public-bucket reads are anonymous by default. To use credentials, a custom endpoint, or
+requester-pays, pass `--storage-options` as a JSON dict, e.g.
+`--storage-options '{}'` to force the normal AWS credential chain, or
+`--storage-options '{"key": "AKIA...", "secret": "..."}'`.
+
+### Python API (BlockMatrix)
+
+```python
+from ldcov.ld_bm import extract_ld
+
+matrix, variants = extract_ld(
+    bm_path="gs://gcp-public-data--gnomad/release/2.1.1/ld/gnomad.genomes.r2.1.1.nfe.common.adj.ld.bm",
+    variant_index_path="gnomad_v2.nfe.b37.variant_index.parquet",
+    region="1:55000000-55100000",
+    out="region",
+)
+```
+
 ## Covariate File Format
 
 Covariates should be provided as a text file with:
@@ -360,6 +372,10 @@ rs123456    1          1000000   A        G
 rs789012    1          1000100   C        T
 ```
 
+Allele convention: `allele1` = ref, `allele2` = alt. This applies throughout ldcov, including
+`--ld-bm` extraction, where z-file variants are matched to the LD matrix by locus and alleles and
+swapped alleles are sign-flipped.
+
 ## Technical Details
 
 ### Genotype Standardization
@@ -382,13 +398,19 @@ The package uses Frisch-Waugh-Lovell (FWL) projection to remove covariate effect
 
 For efficiency, the QR decomposition can be pre-computed once and reused across multiple analyses, as the projection matrix Q depends only on the covariates, not the genotypes.
 
-## Requirements
+## Dependencies
 
-- Python 3.8+
+Installed automatically with the package (see [Requirements](#requirements) for build prerequisites):
+
 - numpy >= 1.19.0
 - pandas >= 1.0.0
 - gcsfs >= 0.7.0
 - tqdm >= 4.50.0
+- fsspec >= 2021.0.0
+- lz4 >= 3.1.0
+- pyarrow >= 6.0.0
+
+Optional extra `ldcov[s3]` adds `s3fs` for reading BlockMatrix LD from AWS S3 (e.g. Pan-UKB).
 
 ## License
 
