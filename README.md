@@ -1,9 +1,8 @@
 # ldcov
 
-[![PyPI](https://img.shields.io/pypi/v/ldcov.svg)](https://pypi.org/project/ldcov/)
-[![Python versions](https://img.shields.io/pypi/pyversions/ldcov.svg)](https://pypi.org/project/ldcov/)
 [![CI](https://github.com/mkanai/ldcov/actions/workflows/ci.yml/badge.svg)](https://github.com/mkanai/ldcov/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PyPI](https://img.shields.io/pypi/v/ldcov.svg)](https://pypi.org/project/ldcov/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A Python package for efficient linkage disequilibrium (LD) calculation with covariate adjustment for BGEN format genetic data.
 
