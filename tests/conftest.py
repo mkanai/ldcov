@@ -12,12 +12,10 @@ import os
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from click.testing import CliRunner
-from typing import Tuple, List, Optional, Union
+from typing import Tuple, List, Optional
 
 # Import for type annotations
 from ldcov.io import load_bgen
-
 
 # ==================== Path Fixtures ====================
 
@@ -64,19 +62,6 @@ def ref_ld_file(data_dir) -> Path:
     return data_dir / "data.ld"
 
 
-@pytest.fixture(scope="session")
-def test_bgen_files(data_dir) -> dict:
-    """Dictionary of test BGEN files by type."""
-    return {
-        "basic": data_dir / "data.bgen",
-        "8bit": data_dir / "example.8bits.bgen",
-        "16bit": data_dir / "example.16bits.bgen",
-        "32bit": data_dir / "example.32bits.bgen",
-        "zstd": data_dir / "example.16bits.zstd.bgen",
-        "v11": data_dir / "example.v11.bgen",
-    }
-
-
 # ==================== Directory Fixtures ====================
 
 
@@ -84,15 +69,6 @@ def test_bgen_files(data_dir) -> dict:
 def temp_dir():
     """Create a temporary directory for test outputs."""
     temp_dir = tempfile.mkdtemp(prefix="ldcov_test_")
-    yield temp_dir
-    shutil.rmtree(temp_dir)
-
-
-@pytest.fixture(scope="class")
-def class_temp_dir(request):
-    """Create a class-scoped temporary directory."""
-    temp_dir = tempfile.mkdtemp(prefix=f"ldcov_test_{request.cls.__name__}_")
-    request.cls.temp_dir = temp_dir
     yield temp_dir
     shutil.rmtree(temp_dir)
 
@@ -209,19 +185,7 @@ def create_covariate_file(temp_dir, sample_ids):
     return _create_cov_file
 
 
-@pytest.fixture
-def standard_cov_file(create_covariate_file):
-    """Create a standard covariate file with PC1, PC2, and sex."""
-    return create_covariate_file()
-
-
 # ==================== CLI Testing Fixtures ====================
-
-
-@pytest.fixture
-def cli_runner():
-    """Create a Click CLI test runner."""
-    return CliRunner()
 
 
 @pytest.fixture
@@ -307,60 +271,6 @@ def create_temp_bgen(temp_dir, bgen_file, bgi_file):
     return _create_temp_bgen
 
 
-# ==================== Matrix Creation Fixtures ====================
-
-
-@pytest.fixture
-def create_test_matrix():
-    """Factory fixture to create test correlation matrices."""
-
-    def _create_matrix(
-        n_vars: int = 10,
-        symmetric: bool = True,
-        unit_diagonal: bool = True,
-        seed: int = 42,
-    ) -> Tuple[np.ndarray, pd.DataFrame]:
-        """
-        Create a test correlation matrix with variant info.
-
-        Args:
-            n_vars: Number of variants
-            symmetric: Whether to make the matrix symmetric
-            unit_diagonal: Whether to set diagonal to 1.0
-            seed: Random seed
-
-        Returns:
-            Tuple of (correlation_matrix, variant_info)
-        """
-        np.random.seed(seed)
-
-        # Create matrix
-        matrix = np.random.rand(n_vars, n_vars)
-        if symmetric:
-            matrix = (matrix + matrix.T) / 2
-
-        # Ensure values are in [-1, 1] range for correlation
-        matrix = matrix * 2 - 1
-
-        if unit_diagonal:
-            np.fill_diagonal(matrix, 1.0)
-
-        # Create variant info
-        variant_info = pd.DataFrame(
-            {
-                "rsid": [f"rs{i}" for i in range(n_vars)],
-                "chrom": ["01"] * n_vars,
-                "pos": list(range(1000, 1000 + n_vars * 100, 100)),
-                "ref": ["A"] * n_vars,
-                "alt": ["G"] * n_vars,
-            }
-        )
-
-        return matrix, variant_info
-
-    return _create_matrix
-
-
 # ==================== Z-file Creation Fixtures ====================
 
 
@@ -407,99 +317,3 @@ def create_z_file(temp_dir, variant_info):
         return z_file
 
     return _create_z_file
-
-
-# ==================== Helper Functions ====================
-
-
-def create_mock_genotypes(
-    n_samples: int = 100,
-    n_variants: int = 10,
-    maf: float = 0.3,
-    seed: int = 42,
-) -> np.ndarray:
-    """
-    Create mock genotype data.
-
-    Args:
-        n_samples: Number of samples
-        n_variants: Number of variants
-        maf: Minor allele frequency
-        seed: Random seed
-
-    Returns:
-        Genotype matrix (n_samples x n_variants)
-    """
-    np.random.seed(seed)
-    return np.random.binomial(2, maf, size=(n_samples, n_variants)).astype(np.float64)
-
-
-def assert_correlation_matrix_properties(matrix: np.ndarray, tol: float = 1e-10):
-    """
-    Assert that a matrix has properties of a correlation matrix.
-
-    Args:
-        matrix: Matrix to check
-        tol: Tolerance for numerical comparisons
-    """
-    # Should be square
-    assert matrix.shape[0] == matrix.shape[1], "Matrix should be square"
-
-    # Should be symmetric
-    assert np.allclose(matrix, matrix.T, atol=tol), "Matrix should be symmetric"
-
-    # Diagonal should be close to 1 (for standard correlation matrices)
-    # Note: For adjusted LD, diagonal might not be exactly 1
-    diag_vals = np.diag(matrix)
-    assert np.all(diag_vals >= 0), "Diagonal values should be non-negative"
-    assert np.all(diag_vals <= 1.1), "Diagonal values should not exceed 1.1"
-
-    # Values should be in [-1, 1] range
-    assert np.all(matrix >= -1.0), "Correlation values should be >= -1"
-    assert np.all(matrix <= 1.0), "Correlation values should be <= 1"
-
-
-def compare_matrices(
-    matrix1: np.ndarray,
-    matrix2: np.ndarray,
-    rtol: float = 1e-5,
-    atol: float = 1e-8,
-) -> Tuple[float, float]:
-    """
-    Compare two matrices and return max and mean differences.
-
-    Args:
-        matrix1: First matrix
-        matrix2: Second matrix
-        rtol: Relative tolerance
-        atol: Absolute tolerance
-
-    Returns:
-        Tuple of (max_diff, mean_diff)
-    """
-    diff = np.abs(matrix1 - matrix2)
-    max_diff = np.max(diff)
-    mean_diff = np.mean(diff)
-
-    # Also check with numpy's allclose for a more comprehensive comparison
-    is_close = np.allclose(matrix1, matrix2, rtol=rtol, atol=atol)
-
-    return max_diff, mean_diff
-
-
-# ==================== Skip Decorators ====================
-
-
-def skip_if_no_ldstore(func):
-    """Skip test if LDstore is not available."""
-    import shutil
-
-    ldstore_available = shutil.which("ldstore") is not None
-    return pytest.mark.skipif(not ldstore_available, reason="LDstore not available")(func)
-
-
-def skip_if_slow(func):
-    """Skip test if running in fast mode."""
-    return pytest.mark.skipif(
-        os.environ.get("LDCOV_FAST_TESTS", "0") == "1", reason="Skipping slow test"
-    )(func)
