@@ -1,5 +1,10 @@
 # ldcov
 
+[![PyPI](https://img.shields.io/pypi/v/ldcov.svg)](https://pypi.org/project/ldcov/)
+[![Python versions](https://img.shields.io/pypi/pyversions/ldcov.svg)](https://pypi.org/project/ldcov/)
+[![CI](https://github.com/mkanai/ldcov/actions/workflows/ci.yml/badge.svg)](https://github.com/mkanai/ldcov/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A Python package for efficient linkage disequilibrium (LD) calculation with covariate adjustment for BGEN format genetic data.
 
 ## Key Features
@@ -15,58 +20,38 @@ A Python package for efficient linkage disequilibrium (LD) calculation with cova
 
 ### Requirements
 
-- Python ≥ 3.8
-- CMake ≥ 3.12 (for building compression libraries)
-- C++ compiler (for building Cython extensions)
+- Python ≥ 3.9
+
+[`lazybgen`](https://github.com/mkanai/lazybgen), the BGEN reader dependency, installs automatically from PyPI as a prebuilt binary wheel (Linux, macOS arm64), so no compiler is required.
 
 ### Standard Installation
 
 ```bash
-# Install from GitHub (recommended)
+# Install from PyPI
+pip install ldcov
+
+# Read BlockMatrix LD from AWS S3 (e.g. Pan-UKB) as well
+pip install "ldcov[s3]"
+
+# Latest development version from GitHub
 pip install git+https://github.com/mkanai/ldcov
 
 # For development
 git clone https://github.com/mkanai/ldcov
 cd ldcov
-git submodule update --init --recursive  # Get compression libraries
-pip install -e .
+pip install -e ".[dev]"
 ```
 
-### Compression Libraries
+### BGEN reading via lazybgen
 
-ldcov uses high-performance compression libraries for BGEN file reading:
+ldcov reads BGEN files through [`lazybgen`](https://github.com/mkanai/lazybgen), a
+standalone high-performance reader (formerly vendored inside ldcov). It statically
+links **zlib-ng** (an optimized zlib replacement) and **zstd** for speed, and
+supports partial reads directly from local files and cloud object stores (GCS
+built-in; S3 via the `s3` extra).
 
-- **zlib-ng**: An optimized zlib replacement (10-30% faster)
-- **zstd**: Fast compression library
-
-By default, ldcov builds these libraries from source for optimal performance and consistency. If the build fails, installation will stop with an error message.
-
-#### Using System Libraries (Not Recommended)
-
-If you cannot build the vendored libraries, you can use system libraries:
-
-```bash
-# Use system zlib and zstd libraries
-LDCOV_USE_SYSTEM_LIBS=1 pip install git+https://github.com/mkanai/ldcov.git
-```
-
-**Warning**: Using system libraries may result in:
-
-- Different behavior between systems
-- Slower performance (standard zlib vs optimized zlib-ng)
-- Potential version incompatibilities
-
-#### Verifying Compression Backend
-
-You can check which compression backend is being used:
-
-```python
-from ldcov.io.bgen._bgen import get_compression_backend
-print(get_compression_backend())
-# {'type': 'vendored', 'zlib': 'zlib-ng 2.2.4 (zlib-compatible, optimized)', ...}
-```
-
-**Note**: ldcov includes a custom Cython-based BGEN reader optimized for performance. All BGEN files must have accompanying BGI index files (create with `bgenix -g file.bgen`).
+`lazybgen` is installed automatically as a dependency. All BGEN files must have
+accompanying BGI index files (create with `bgenix -g file.bgen`).
 
 ## Usage
 
@@ -173,7 +158,8 @@ subset, meta = reader.read_corr_by_rsid(["rs1234", "rs5678", "rs9012"])
 subset, meta = reader.read_corr_by_rsid(rsids_a, rsids2=rsids_b)
 ```
 
-To generate an index for an existing `.bcor` file (e.g., LDstore output), run:
+To generate an index for an existing `.bcor` file (e.g., LDstore output), run the
+helper script from a clone of the ldcov repository (it is not installed with the package):
 
 ```bash
 python scripts/make_bcor_idx.py path/to/file.bcor
@@ -234,7 +220,8 @@ Read a submatrix of a Hail `BlockMatrix` LD store (e.g. gnomAD) directly from cl
 ### One-time: build the variant index
 
 The variant-to-matrix-index mapping lives in the matrix's companion `variant_indices.ht`. Convert it
-once to a Parquet variant index on a machine with Hail installed:
+once to a Parquet variant index on a machine with Hail installed, using the helper script from a
+clone of the ldcov repository (it is not installed with the package):
 
 ```bash
 python scripts/make_bm_variant_index.py \
@@ -348,14 +335,15 @@ matrix, variants = extract_ld(
 
 Covariates should be provided as a text file with:
 
-- First column: Sample IDs (must match BGEN file)
+- A sample-ID column named `IID` by default (must match the BGEN sample IDs). Use a
+  different column name via `--covariate-id-col`.
 - Additional columns: Covariate values (numeric or categorical)
 - Header row with column names
 
 Example:
 
 ```
-ID      PC1     PC2     batch
+IID     PC1     PC2     batch
 SAMPLE1 0.032   -0.011  A
 SAMPLE2 -0.021  0.043   B
 ```
@@ -400,12 +388,12 @@ For efficiency, the QR decomposition can be pre-computed once and reused across 
 
 ## Dependencies
 
-Installed automatically with the package (see [Requirements](#requirements) for build prerequisites):
+Installed automatically with the package:
 
+- lazybgen >= 0.1 (BGEN reader; prebuilt binary wheel)
 - numpy >= 1.19.0
 - pandas >= 1.0.0
 - gcsfs >= 0.7.0
-- tqdm >= 4.50.0
 - fsspec >= 2021.0.0
 - lz4 >= 3.1.0
 - pyarrow >= 6.0.0

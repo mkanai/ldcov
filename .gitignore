@@ -93,24 +93,10 @@ uv.lock
 # Claude AI instructions (local development only)
 CLAUDE.md
 
-# Cython build artifacts
-# Ignore ONLY Cython-generated C/C++ files (those with corresponding .pyx files)
-# Hand-written C++ files in subdirectories are tracked by git
-ldcov/io/bgen/_bgen.cpp
-ldcov/io/bgen/_decompressor.cpp
-ldcov/io/bgen/header.cpp
-ldcov/io/bgen/reader.cpp
-ldcov/io/bgen/variant.cpp
-ldcov/io/bgen/_reader_v2.cpp
-ldcov/io/bgen/reader_v1.cpp
-ldcov/**/*.c
+# Build artifacts
 *.so
-*.html
 build/
 *.egg-info/
-
-# Auto-generated build configuration
-ldcov/io/bgen/_build_config.py
 
 # Reference files (not for commit)
 reference_only/
@@ -120,4 +106,3 @@ benchmarks/test_data/
 benchmark_logs/
 benchmark_results/
 comparison_results/
-ldcov/io/bgen/reader_v1.cpp

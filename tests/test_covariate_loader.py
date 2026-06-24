@@ -5,11 +5,8 @@ This module contains all tests related to loading and processing covariate files
 including handling of categorical variables, missing data, and sample filtering.
 """
 
-import numpy as np
 import pandas as pd
 import pytest
-from pathlib import Path
-import tempfile
 
 from ldcov.io.covariate_loader import load_covariates
 from ldcov.utils.categorical_utils import one_hot_encode_categorical

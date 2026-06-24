@@ -68,13 +68,15 @@ def _make_variant_info(n: int) -> pd.DataFrame:
     # Unique rsids, in position-sorted (row) order.
     rsids = [f"rs{(i * 17) % 9973}" for i in range(n)]
     assert len(set(rsids)) == n, "test fixture must produce unique rsids"
-    return pd.DataFrame({
-        "rsid": rsids,
-        "chrom": ["1"] * n,
-        "pos": list(range(1000, 1000 + n)),  # already sorted
-        "ref": ["A"] * n,
-        "alt": ["G"] * n,
-    })
+    return pd.DataFrame(
+        {
+            "rsid": rsids,
+            "chrom": ["1"] * n,
+            "pos": list(range(1000, 1000 + n)),  # already sorted
+            "ref": ["A"] * n,
+            "alt": ["G"] * n,
+        }
+    )
 
 
 def _write_args(meta_offsets, bcor_meta_start=32):
@@ -120,7 +122,9 @@ def test_index_writer_rejects_bad_offsets(tmp_path):
         writer.write(variant_info, **_write_args(bad))
 
     bad2 = np.array([32, 50, 45, 60, 70, 80], dtype=np.uint64)
-    with pytest.raises(ValueError, match="meta_record_offsets must be monotonically non-decreasing"):
+    with pytest.raises(
+        ValueError, match="meta_record_offsets must be monotonically non-decreasing"
+    ):
         writer.write(variant_info, **_write_args(bad2))
 
 
@@ -149,13 +153,15 @@ def test_index_writer_rejects_meta_offset_endpoints(tmp_path):
 def test_index_writer_rejects_duplicate_rsids(tmp_path):
     """Partial read by rsid requires unique rsid → row mapping. Reject duplicates."""
     n = 4
-    variant_info = pd.DataFrame({
-        "rsid": ["rsA", "rsB", "rsA", "rsC"],  # rsA duplicated
-        "chrom": ["1"] * n,
-        "pos": list(range(1, n + 1)),
-        "ref": ["A"] * n,
-        "alt": ["G"] * n,
-    })
+    variant_info = pd.DataFrame(
+        {
+            "rsid": ["rsA", "rsB", "rsA", "rsC"],  # rsA duplicated
+            "chrom": ["1"] * n,
+            "pos": list(range(1, n + 1)),
+            "ref": ["A"] * n,
+            "alt": ["G"] * n,
+        }
+    )
     offsets = np.arange(32, 32 + 20 * (n + 1), 20, dtype=np.uint64)
 
     writer = BcorIndexWriter(str(tmp_path / "dup.bcor.idx"))
@@ -197,13 +203,15 @@ def test_index_writer_empty_input_requires_consistent_endpoints(tmp_path):
 def test_index_writer_keeps_row_order(tmp_path):
     """rsids must be stored in row order; rsid_offsets reflects per-row lengths."""
     n = 3
-    variant_info = pd.DataFrame({
-        "rsid": ["ccc", "a", "bb"],  # row order, NOT sorted
-        "chrom": ["1"] * n,
-        "pos": list(range(1, n + 1)),
-        "ref": ["A"] * n,
-        "alt": ["G"] * n,
-    })
+    variant_info = pd.DataFrame(
+        {
+            "rsid": ["ccc", "a", "bb"],  # row order, NOT sorted
+            "chrom": ["1"] * n,
+            "pos": list(range(1, n + 1)),
+            "ref": ["A"] * n,
+            "alt": ["G"] * n,
+        }
+    )
     offsets = np.arange(32, 32 + 20 * (n + 1), 20, dtype=np.uint64)
     writer = BcorIndexWriter(str(tmp_path / "row.bcor.idx"))
     writer.write(variant_info, **_write_args(offsets))
@@ -219,12 +227,14 @@ def test_index_writer_keeps_row_order(tmp_path):
 
 def test_index_writer_requires_rsid_column(tmp_path):
     """variant_info missing the 'rsid' column must be rejected with a clear error."""
-    no_rsid = pd.DataFrame({
-        "chrom": ["1", "1"],
-        "pos": [100, 200],
-        "ref": ["A", "A"],
-        "alt": ["G", "T"],
-    })
+    no_rsid = pd.DataFrame(
+        {
+            "chrom": ["1", "1"],
+            "pos": [100, 200],
+            "ref": ["A", "A"],
+            "alt": ["G", "T"],
+        }
+    )
     offsets = np.array([32, 52, 72], dtype=np.uint64)
     writer = BcorIndexWriter(str(tmp_path / "no_rsid.bcor.idx"))
     with pytest.raises(ValueError, match="must have an 'rsid' column"):
@@ -365,13 +375,15 @@ def test_index_reader_empty_index(tmp_path):
 def test_index_reader_rejects_duplicate_rsid_in_block(tmp_path):
     """Duplicate rsids in the loaded block must be rejected by the reader (defense in depth)."""
     n = 4
-    variant_info = pd.DataFrame({
-        "rsid": ["rs1", "rs2", "rs3", "rs4"],
-        "chrom": ["1"] * n,
-        "pos": list(range(1, n + 1)),
-        "ref": ["A"] * n,
-        "alt": ["G"] * n,
-    })
+    variant_info = pd.DataFrame(
+        {
+            "rsid": ["rs1", "rs2", "rs3", "rs4"],
+            "chrom": ["1"] * n,
+            "pos": list(range(1, n + 1)),
+            "ref": ["A"] * n,
+            "alt": ["G"] * n,
+        }
+    )
     offsets = np.arange(32, 32 + 20 * (n + 1), 20, dtype=np.uint64)
     path = tmp_path / "dup.bcor.idx"
     BcorIndexWriter(str(path)).write(

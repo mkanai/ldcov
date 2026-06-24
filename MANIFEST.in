@@ -1,41 +1,17 @@
 include LICENSE
 include README.md
+include CHANGELOG.md
 include pyproject.toml
 include MANIFEST.in
 include Makefile
-include setup.py
-include setup.cfg
-include .gitmodules
 
-# Include Cython source files
-recursive-include ldcov *.pyx *.pxd *.pxi
-
-# Include generated build configuration
-include ldcov/io/bgen/_build_config.py
-
-# Include C++ source files and headers
-recursive-include ldcov/io/bgen *.cpp *.h *.hpp
-recursive-include ldcov/io/bgen/decompress *.cpp *.h *.hpp
-recursive-include ldcov/io/bgen/format *.cpp *.h *.hpp
-recursive-include ldcov/io/bgen/index *.cpp *.h *.hpp
-recursive-include ldcov/io/bgen/io *.cpp *.h *.hpp
-recursive-include ldcov/io/bgen/legacy *.cpp *.h *.hpp
-
-# Include vendored libraries
-recursive-include ldcov/io/bgen/zlib-ng *
-recursive-include ldcov/io/bgen/zstd *
-
-# Include examples and tests
-recursive-include examples *.py
+# Include tests in the sdist
 recursive-include tests *.py
-recursive-include tests/data *
 
 # Exclude compiled files and build artifacts
 global-exclude *.pyc
 global-exclude *.pyo
 global-exclude *.so
-global-exclude *.o
-global-exclude *.a
 global-exclude __pycache__
 global-exclude .git
 global-exclude .gitignore
@@ -43,12 +19,3 @@ global-exclude .github
 global-exclude build
 global-exclude dist
 global-exclude *.egg-info
-
-# Exclude generated Cython C files (will be regenerated)
-exclude ldcov/io/bgen/*.c
-exclude ldcov/io/bgen/_bgen.cpp
-exclude ldcov/io/bgen/_decompressor.cpp
-exclude ldcov/io/bgen/header.cpp
-exclude ldcov/io/bgen/reader.cpp
-exclude ldcov/io/bgen/reader_v1.cpp
-exclude ldcov/io/bgen/variant.cpp

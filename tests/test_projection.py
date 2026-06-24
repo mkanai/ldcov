@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import os
-from pathlib import Path
 
 from ldcov.compute.projection import (
     ProjectionData,

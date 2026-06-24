@@ -1,0 +1,18 @@
+[flake8]
+max-line-length = 100
+# E203 (whitespace before ':') and W503 (line break before binary operator) conflict
+# with black's formatting. E501 line length is owned by `black --check` (line-length 100);
+# black leaves only unsplittable strings/comments over the limit. F824: intentional globals.
+extend-ignore = E203, W503, E501, F824
+exclude =
+    .git,
+    __pycache__,
+    build,
+    dist,
+    *.egg-info,
+    .venv,
+    venv,
+    benchmarks
+per-file-ignores =
+    # Package __init__ files re-export public API; unused imports are intentional.
+    __init__.py:F401

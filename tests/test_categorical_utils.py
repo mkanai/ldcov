@@ -9,7 +9,6 @@ This module tests categorical variable handling for:
 - Edge cases
 """
 
-import pytest
 import pandas as pd
 
 from ldcov.utils.categorical_utils import one_hot_encode_categorical

@@ -199,7 +199,6 @@ def test_ldstore_comparison(ref_ld_file, compute_test_data):
     # Validate against LDstore with tolerance
     tol = 0.05  # 5% difference allowed
     differences = np.abs(ldcov_ld - ldstore_ld)
-    max_diff = np.max(differences)
     avg_diff = np.mean(differences)
 
     # Check overall similarity

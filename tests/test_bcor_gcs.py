@@ -17,13 +17,15 @@ def local_bcor_bytes(tmp_path):
     corr = rng.uniform(-0.5, 0.5, size=(n, n))
     corr = (corr + corr.T) / 2
     np.fill_diagonal(corr, 1.0)
-    variant_info = pd.DataFrame({
-        "rsid": [f"rs{i}" for i in range(n)],
-        "chrom": ["1"] * n,
-        "pos": list(range(1, n + 1)),
-        "ref": ["A"] * n,
-        "alt": ["G"] * n,
-    })
+    variant_info = pd.DataFrame(
+        {
+            "rsid": [f"rs{i}" for i in range(n)],
+            "chrom": ["1"] * n,
+            "pos": list(range(1, n + 1)),
+            "ref": ["A"] * n,
+            "alt": ["G"] * n,
+        }
+    )
     out = tmp_path / "fixture.bcor"
     save_bcor(corr, str(out), variant_info=variant_info, n_samples=50)
     return {
@@ -36,6 +38,7 @@ def local_bcor_bytes(tmp_path):
 
 class _FakeGCSFile:
     """Minimal gcsfs-compatible file object backed by an in-memory buffer."""
+
     def __init__(self, data: bytes):
         self._buf = io.BytesIO(data)
 
@@ -107,6 +110,7 @@ def test_reader_rejects_sidecar_when_parent_truncated(local_bcor_bytes, tmp_path
     (tmp_path / "trunc.bcor.idx").write_bytes(local_bcor_bytes["idx_bytes"])
 
     import logging
+
     with caplog.at_level(logging.WARNING):
         reader = BcorReader(str(bcor_path))
 
@@ -122,11 +126,17 @@ def test_reader_rejects_stale_sidecar(local_bcor_bytes, tmp_path, caplog):
     other_corr = rng.uniform(-0.5, 0.5, size=(n, n))
     other_corr = (other_corr + other_corr.T) / 2
     np.fill_diagonal(other_corr, 1.0)
-    other_vi = pd.DataFrame({
-        "rsid": [f"OTHERnameLong{i}" for i in range(n)],  # different rsids AND different lengths
-        "chrom": ["1"] * n, "pos": list(range(1, n + 1)),
-        "ref": ["A"] * n, "alt": ["G"] * n,
-    })
+    other_vi = pd.DataFrame(
+        {
+            "rsid": [
+                f"OTHERnameLong{i}" for i in range(n)
+            ],  # different rsids AND different lengths
+            "chrom": ["1"] * n,
+            "pos": list(range(1, n + 1)),
+            "ref": ["A"] * n,
+            "alt": ["G"] * n,
+        }
+    )
     other_path = tmp_path / "other.bcor"
     save_bcor(other_corr, str(other_path), variant_info=other_vi, n_samples=50)
 
@@ -136,13 +146,14 @@ def test_reader_rejects_stale_sidecar(local_bcor_bytes, tmp_path, caplog):
     (tmp_path / "mismatch.bcor.idx").write_bytes(foreign_idx_bytes)
 
     import logging
+
     with caplog.at_level(logging.WARNING):
         reader = BcorReader(str(bcor_path))
 
     assert not reader.has_index, "stale sidecar must be rejected"
-    assert any("mismatch" in rec.message.lower() for rec in caplog.records), (
-        f"expected mismatch warning; got: {[r.message for r in caplog.records]}"
-    )
+    assert any(
+        "mismatch" in rec.message.lower() for rec in caplog.records
+    ), f"expected mismatch warning; got: {[r.message for r in caplog.records]}"
     loaded = reader.read_corr()
     np.testing.assert_array_almost_equal(loaded, local_bcor_bytes["corr"], decimal=4)
 
@@ -179,9 +190,7 @@ def test_read_corr_by_rsid_missing_skip(local_bcor_bytes, tmp_path):
     (tmp_path / "idx.bcor.idx").write_bytes(local_bcor_bytes["idx_bytes"])
 
     reader = BcorReader(str(out))
-    subset, subset_meta = reader.read_corr_by_rsid(
-        ["rs1", "rs_missing", "rs3"], missing="skip"
-    )
+    subset, subset_meta = reader.read_corr_by_rsid(["rs1", "rs_missing", "rs3"], missing="skip")
     assert list(subset_meta["rsid"]) == ["rs1", "rs3"]
     assert subset.shape == (2, 2)
 
@@ -214,13 +223,15 @@ def test_read_corr_by_rsid_extended_format(tmp_path):
     corr = (corr + corr.T) / 2
     diag = 0.7 + 0.3 * rng.random(n)
     np.fill_diagonal(corr, diag)
-    variant_info = pd.DataFrame({
-        "rsid": [f"rsX{i}" for i in range(n)],
-        "chrom": ["1"] * n,
-        "pos": list(range(1, n + 1)),
-        "ref": ["A"] * n,
-        "alt": ["G"] * n,
-    })
+    variant_info = pd.DataFrame(
+        {
+            "rsid": [f"rsX{i}" for i in range(n)],
+            "chrom": ["1"] * n,
+            "pos": list(range(1, n + 1)),
+            "ref": ["A"] * n,
+            "alt": ["G"] * n,
+        }
+    )
     out = tmp_path / "ext.bcor"
     save_bcor(corr, str(out), variant_info=variant_info, n_samples=42)
 
@@ -278,7 +289,7 @@ def test_gcs_meta_block_not_downloaded_at_open_when_sidecar_present(local_bcor_b
     }
 
     with patch("gcsfs.GCSFileSystem", return_value=RecordingFake(contents)):
-        reader = BcorReader(gcs_bcor)
+        BcorReader(gcs_bcor)  # construction fetches only the header
 
     bcor_bytes_read = sum(n for p, _, n in fetched if p == gcs_bcor)
     # On open: exactly the 32-byte header. The meta block must NOT be touched.
@@ -324,9 +335,9 @@ def test_gcs_get_meta_uses_single_contiguous_read(local_bcor_bytes):
     new_reads = [r for r in fetched if r not in before]
     # The eager meta path should issue exactly 1 read against the .bcor for the meta block.
     bcor_reads = [r for r in new_reads if r[0] == gcs_bcor]
-    assert len(bcor_reads) == 1, (
-        f"Expected exactly 1 ranged read for the meta block; got {len(bcor_reads)}: {bcor_reads}"
-    )
+    assert (
+        len(bcor_reads) == 1
+    ), f"Expected exactly 1 ranged read for the meta block; got {len(bcor_reads)}: {bcor_reads}"
     assert len(meta) == reader.n_snps
 
 

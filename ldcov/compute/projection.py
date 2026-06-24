@@ -8,15 +8,22 @@ reuse across multiple genomic analyses.
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple, Optional, Union, NamedTuple
+from typing import Dict, List, Tuple, Optional, NamedTuple
 import logging
 from datetime import datetime
 import os
 
 from ..io.covariate_loader import load_covariates
-from ..utils.categorical_utils import one_hot_encode_categorical
 
 logger = logging.getLogger(__name__)
+
+
+def _ldcov_version() -> str:
+    """Return the installed ldcov version for provenance metadata."""
+    from ldcov import __version__
+
+    return __version__
+
 
 # Version for projection matrix format
 PROJECTION_FORMAT_VERSION = "1.0"
@@ -160,7 +167,7 @@ def compute_projection_matrix(
     metadata = {
         "format_version": PROJECTION_FORMAT_VERSION,
         "creation_date": datetime.now().isoformat(),
-        "ldcov_version": "0.2.0",  # TODO: Get from package version
+        "ldcov_version": _ldcov_version(),
         "covariate_file": os.path.abspath(covariate_file),
         "n_samples": str(len(ordered_sample_ids)),
         "n_covariates_original": str(X.shape[1]),

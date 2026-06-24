@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 from typing import Optional, List, Tuple
 import logging
-import os
 
 # Local compute imports
 from .covariate import regress_out_covariates, standardize_genotypes
@@ -90,7 +89,7 @@ def load_and_adjust_genotypes(
 
     if projection_matrix_file:
         # If using projection matrix, we need to load only samples in the projection
-        logger.info(f"Pre-loading projection matrix to determine samples")
+        logger.info("Pre-loading projection matrix to determine samples")
         from .projection import load_projection_matrix
 
         projection_data = load_projection_matrix(projection_matrix_file)
@@ -99,7 +98,7 @@ def load_and_adjust_genotypes(
 
     elif covariate_file:
         # If using covariates, we can pre-load the sample IDs to filter early
-        logger.info(f"Pre-loading covariate sample IDs for early filtering")
+        logger.info("Pre-loading covariate sample IDs for early filtering")
         # Quick load just to get sample IDs
         import pandas as pd
 

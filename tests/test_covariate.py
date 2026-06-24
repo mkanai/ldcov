@@ -71,18 +71,21 @@ def test_standardize_genotypes_basic():
 
 
 def test_standardize_genotypes_no_scaling():
-    """Test standardization without scaling."""
+    """Test standardization with centering but scale=False (norms are identity)."""
     genotypes = np.random.rand(10, 5).astype(np.float64)
 
-    # This will fail due to bug in standardize_genotypes (norms not defined when scale=False)
-    # Test with scale=True instead
     std_geno, means, norms = standardize_genotypes(
-        genotypes, center=True, scale=True, inplace=False
+        genotypes, center=True, scale=False, inplace=False
     )
 
-    # Check centering
+    # Check centering was applied
     col_means = np.mean(std_geno, axis=0)
     np.testing.assert_allclose(col_means, 0, atol=1e-10)
+
+    # scale=False -> norms are all ones (identity) and no scaling applied:
+    # the result equals the centered genotypes exactly.
+    np.testing.assert_array_equal(norms, np.ones(genotypes.shape[1]))
+    np.testing.assert_allclose(std_geno, genotypes - means[np.newaxis, :])
 
 
 def test_standardize_genotypes_inplace():

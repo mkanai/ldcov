@@ -7,14 +7,14 @@ in various formats.
 
 import numpy as np
 import pandas as pd
-from typing import Optional, Dict, Tuple
+from typing import Optional, Tuple
 import logging
 import os
 import gzip
 
 # Import bcor functionality from dedicated modules
 from .bcor_reader import BcorReader
-from .bcor_writer import BcorWriter, save_bcor
+from .bcor_writer import save_bcor
 
 logger = logging.getLogger(__name__)
 
@@ -40,17 +40,40 @@ def save_correlation_matrix(
     variant_info : pandas.DataFrame, optional
         Variant information
     output_format : str
-        Output format ("matrix", "long", "bcor")
+        Output format ("matrix", "long", "bcor"). The "long" format stores the
+        upper triangle including the diagonal, so it round-trips to six-decimal
+        text precision (R values are written with "%.6f"): non-unit diagonals from
+        covariate-adjusted LD are preserved (not forced to 1.0 on load), and a single
+        variant still writes one row whose metadata is recoverable on load.
     n_samples : int, optional
         Number of samples (for bcor format metadata)
     compression : int, optional
-        Compression level for bcor format (0=1byte, 1=2bytes, 2=4bytes, 3=8bytes)
+        Compression level for bcor format (0=2bytes, 1=4bytes, 2=8bytes, 3=1byte; default 1)
     write_index : bool, optional
         When output_format=='bcor', also emit a .bcor.idx sidecar (default True)
     """
     # Check output format
     if output_format not in ["matrix", "long", "bcor"]:
         raise ValueError(f"Unsupported output format: {output_format}")
+
+    # Reject a 0-variant numeric long save up front, BEFORE opening/writing any file:
+    # the resulting header-only file is indistinguishable from a legacy diagonal-less
+    # 1-variant file and the loader resolves that ambiguity to a 1x1 identity. Validating
+    # here (rather than after the header is written) avoids leaving an ambiguous
+    # header-only artifact on disk when the caller catches the error. The variant_info
+    # branch has no such ambiguity: an empty body yields a 0-row variant_info and a
+    # (0, 0) matrix, so it is allowed.
+    if (
+        output_format == "long"
+        and not output_file.endswith((".npz", ".bcor"))
+        and variant_info is None
+        and corr_matrix.shape[0] == 0
+    ):
+        raise ValueError(
+            "Cannot save a 0-variant matrix in numeric long format: the header-only "
+            "file is indistinguishable from a legacy 1-variant file and would load back "
+            "as a 1x1 identity. Provide variant_info or use another output format."
+        )
 
     # Save as numpy compressed file if specified
     if output_file.endswith(".npz"):
@@ -106,12 +129,16 @@ def save_correlation_matrix(
             else:
                 f.write("#VAR1\tVAR2\tR\n")
 
-            # Write correlation values one ROW-BAND at a time (upper triangle, row-major).
+            # Write the UPPER TRIANGLE INCLUDING THE DIAGONAL, one row-band at a time,
+            # row-major. Writing the diagonal pair (i, i) makes the round-trip preserve
+            # the diagonal (to the %.6f text precision below): a non-unit diagonal (e.g.
+            # covariate-adjusted LD) is read back rather than forced to 1.0, and a single
+            # variant still produces one row so its metadata is recoverable on load.
             # Each row's pairs are formatted with vectorized numpy string ops instead of an
             # O(n^2) Python double-loop over individual f-strings: np.char.mod("%.6f", ...)
             # for the R column (byte-identical to f"{r:.6f}", incl. nan / -0.0) and numpy
             # string concatenation for the rest. Only one row of strings is held at a time,
-            # so this is memory-safe at large n (a full 50M-row DataFrame would OOM).
+            # so this is memory-safe at large n (a full upper-triangle DataFrame would OOM).
             n_variants = corr_matrix.shape[0]
 
             if variant_info is not None:
@@ -127,18 +154,20 @@ def save_correlation_matrix(
                         for k in range(n_variants)
                     ]
                 )
-                for i in range(n_variants - 1):
-                    r_strs = np.char.mod("%.6f", corr_matrix[i, i + 1 :])
+                for i in range(n_variants):
+                    r_strs = np.char.mod("%.6f", corr_matrix[i, i:])
                     # np.char.add throughout: the `+` ufunc has no string-concat loop on
                     # older numpy (Python 3.8), unlike np.char.add.
-                    row = np.char.add(prefixes[i], prefixes[i + 1 :])
+                    row = np.char.add(prefixes[i], prefixes[i:])
                     lines = np.char.add(np.char.add(row, r_strs), "\n")
                     f.write("".join(lines.tolist()))
             else:
+                # 0-variant numeric long saves are rejected up front (see the guard near
+                # the top of this function), so n_variants >= 1 here.
                 idx_strs = np.arange(n_variants).astype(str)
-                for i in range(n_variants - 1):
-                    r_strs = np.char.mod("%.6f", corr_matrix[i, i + 1 :])
-                    row = np.char.add(str(i) + "\t", idx_strs[i + 1 :])
+                for i in range(n_variants):
+                    r_strs = np.char.mod("%.6f", corr_matrix[i, i:])
+                    row = np.char.add(str(i) + "\t", idx_strs[i:])
                     row = np.char.add(np.char.add(row, "\t"), r_strs)
                     lines = np.char.add(row, "\n")
                     f.write("".join(lines.tolist()))
@@ -206,8 +235,28 @@ def load_correlation_matrix(
         first_line = f.readline().strip()
 
     if first_line.startswith("#"):
-        # Long format
-        df = pd.read_csv(file_path, sep="\t", comment="#")
+        # Long format. The header line is written with a leading '#' (e.g.
+        # "#VAR1\tVAR2\tR"); parse it as a normal header and strip the '#' off
+        # the first column name. (comment="#" would discard the whole header,
+        # leaving positional integer column names.)
+        #
+        # Read every column as a string and only coerce what we need:
+        #   - variant metadata (CHROM/ID/REF/ALT, and POS) stays verbatim so that
+        #     string-valued fields like chrom "01" or numeric-looking rsids are
+        #     not silently coerced to ints by pandas' dtype inference.
+        #   - the R column is parsed to float below.
+        # The format stores the upper triangle including the diagonal (pairs i==j),
+        # so the diagonal is read back from the file. Older files written without a
+        # diagonal still load correctly: the matrix is initialized to the identity
+        # below, so any unwritten diagonal entry defaults to 1.0.
+        # Read through open_func so .bgz (and .gz) long-format files decompress
+        # correctly: pandas does not infer gzip from a .bgz extension
+        # (infer_compression("x.bgz", "infer") -> None), so passing the raw
+        # file_path would fail the full parse even though the first-line format
+        # detection above used the same gzip handle.
+        with open_func(file_path, mode) as fh:
+            df = pd.read_csv(fh, sep="\t", dtype=str)
+        df = df.rename(columns={df.columns[0]: str(df.columns[0]).lstrip("#")})
 
         # Extract variant info
         if all(
@@ -226,16 +275,20 @@ def load_correlation_matrix(
             ]
         ):
             variant_cols = ["CHROM", "POS", "ID", "REF", "ALT"]
+            b_cols = [f"{col}_B" for col in variant_cols]
             variant_a = df[variant_cols].drop_duplicates().reset_index(drop=True)
-            variant_b = (
-                df.rename(columns={f"{col}_B": col for col in variant_cols})[variant_cols]
-                .drop_duplicates()
-                .reset_index(drop=True)
-            )
+            # Select the _B columns first, then relabel; renaming in place would
+            # collide with the identically-named A columns and break the select.
+            variant_b = df[b_cols].drop_duplicates().reset_index(drop=True)
+            variant_b.columns = variant_cols
             variant_info = (
                 pd.concat([variant_a, variant_b]).drop_duplicates().reset_index(drop=True)
             )
             variant_info.columns = ["chrom", "pos", "rsid", "ref", "alt"]
+            # chrom/rsid/ref/alt stay strings (preserve "01", numeric-looking
+            # IDs); pos is genomic coordinate, so coerce to int to match the
+            # bcor/.npz loaders.
+            variant_info["pos"] = pd.to_numeric(variant_info["pos"]).astype(int)
         else:
             variant_info = None
 
@@ -243,27 +296,49 @@ def load_correlation_matrix(
         if variant_info is not None:
             n_variants = len(variant_info)
             corr_matrix = np.identity(n_variants)
+            # Map each (chrom, pos, rsid, ref, alt) key to its row index in
+            # variant_info once, so we don't run an O(n) boolean scan of
+            # variant_info per pair. The full 5-tuple matches the columns
+            # drop_duplicates() used to build variant_info, so two variants that
+            # share chrom/pos/rsid but differ by allele stay distinct. Keys use
+            # the string df cells (dtype=str above) on both sides;
+            # variant_info["pos"] is int now, so cast it back to str to match
+            # the df POS columns.
+            key_to_idx = {
+                (chrom, str(pos), rsid, ref, alt): k
+                for k, (chrom, pos, rsid, ref, alt) in enumerate(
+                    zip(
+                        variant_info["chrom"],
+                        variant_info["pos"],
+                        variant_info["rsid"],
+                        variant_info["ref"],
+                        variant_info["alt"],
+                    )
+                )
+            }
             for _, row in df.iterrows():
-                idx1 = variant_info[
-                    (variant_info["chrom"] == row["CHROM"])
-                    & (variant_info["pos"] == row["POS"])
-                    & (variant_info["rsid"] == row["ID"])
-                ].index[0]
-                idx2 = variant_info[
-                    (variant_info["chrom"] == row["CHROM_B"])
-                    & (variant_info["pos"] == row["POS_B"])
-                    & (variant_info["rsid"] == row["ID_B"])
-                ].index[0]
-                corr_matrix[idx1, idx2] = row["R"]
-                corr_matrix[idx2, idx1] = row["R"]  # Symmetrical
+                idx1 = key_to_idx[(row["CHROM"], row["POS"], row["ID"], row["REF"], row["ALT"])]
+                idx2 = key_to_idx[
+                    (row["CHROM_B"], row["POS_B"], row["ID_B"], row["REF_B"], row["ALT_B"])
+                ]
+                r = float(row["R"])
+                corr_matrix[idx1, idx2] = r
+                corr_matrix[idx2, idx1] = r  # Symmetrical
         else:
-            # Simple numeric indices
-            max_var = max(df["VAR1"].max(), df["VAR2"].max())
-            corr_matrix = np.identity(max_var + 1)
-            for _, row in df.iterrows():
-                idx1, idx2 = int(row["VAR1"]), int(row["VAR2"])
-                corr_matrix[idx1, idx2] = row["R"]
-                corr_matrix[idx2, idx1] = row["R"]  # Symmetrical
+            # Simple numeric indices. df cells are strings (dtype=str above),
+            # so coerce VAR1/VAR2 to int explicitly. An empty body (only a 0-variant
+            # matrix has no rows now that the diagonal is written) leaves max() with
+            # no values, so default to a 1x1 identity in that case.
+            var1 = df["VAR1"].astype(int)
+            var2 = df["VAR2"].astype(int)
+            if len(df) == 0:
+                n_variants = 1
+            else:
+                n_variants = int(max(var1.max(), var2.max())) + 1
+            corr_matrix = np.identity(n_variants)
+            for idx1, idx2, r in zip(var1, var2, df["R"].astype(float)):
+                corr_matrix[idx1, idx2] = r
+                corr_matrix[idx2, idx1] = r  # Symmetrical
     else:
         # Plain matrix format (tab-separated values)
         with open_func(file_path, mode) as f:
