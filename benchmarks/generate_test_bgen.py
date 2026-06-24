@@ -18,17 +18,14 @@ from pathlib import Path
 import tempfile
 
 try:
-    # Try to import the installed bgen library
+    # The external bgen library is used only to WRITE synthetic fixtures;
+    # lazybgen (ldcov's reader) does not write BGEN.
     from bgen import BgenWriter
 except ImportError:
-    # If not installed, try to add the source path
-    sys.path.insert(0, str(Path(__file__).parent.parent / "reference_only" / "bgen" / "src"))
-    try:
-        from bgen import BgenWriter
-    except ImportError:
-        print("Error: Could not import bgen library")
-        print("Please install it with: pip install git+https://github.com/mkanai/bgen.git")
-        sys.exit(1)
+    print("Error: Could not import the bgen library (writer for test fixtures).")
+    print("Install it with: pip install git+https://github.com/mkanai/bgen.git")
+    print("Also requires `bgenix` on PATH to build .bgi indexes.")
+    sys.exit(1)
 
 
 def generate_random_genotypes(n_samples, n_alleles=2, ploidy=2):

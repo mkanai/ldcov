@@ -102,7 +102,11 @@ For each profiled workflow, the following files are generated:
 - `<workflow>_<timestamp>_python.prof` - Raw cProfile data
 - `<workflow>_<timestamp>_python_stats.txt` - Human-readable statistics (top 50 functions, callers)
 
-#### C++ Profiling Files (if perf is available)
+#### Native (C++) Profiling Files (if perf is available)
+
+ldcov itself is pure Python; any native frames captured here come from the
+`lazybgen` BGEN reader dependency (its compiled `.so`).
+
 - `<workflow>_<timestamp>_perf.data` - Raw perf data
 - `<workflow>_<timestamp>_perf_report.txt` - Perf report output
 - `<workflow>_<timestamp>_flame.svg` - Flame graph (if flamegraph.pl is available)

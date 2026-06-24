@@ -32,14 +32,13 @@ RUN if [ -d .git ]; then \
 # Stage 2: Build and run environment
 FROM python:3.11-slim
 
-# Install system dependencies and profiling tools
+# Profiling tools + OpenBLAS. lazybgen installs from a prebuilt PyPI wheel, so no
+# C/C++ toolchain is needed; gcc/g++/make are kept only so historical (pre-lazybgen,
+# vendored-BGEN) ldcov commits can still be benchmarked.
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
-    cmake \
     make \
-    sqlite3 \
-    libsqlite3-dev \
     git \
     linux-perf \
     graphviz \
@@ -53,16 +52,8 @@ COPY --from=git-checkout /repo .
 COPY --from=git-checkout /tmp/COMMIT_INFO.txt /app/COMMIT_INFO.txt
 COPY --from=git-checkout /tmp/COMMIT_HASH.txt /app/COMMIT_HASH.txt
 
-# Enable SIMD optimizations (AVX2 + FMA for x86_64)
-ENV CFLAGS="-O3 -mfma -mavx -mavx2"
-ENV CXXFLAGS="-O3 -mfma -mavx -mavx2 -std=c++17"
-
-# Ensure we don't use system libraries
-ENV LDCOV_USE_SYSTEM_LIBS=0
-
-# Install build dependencies and ldcov
+# Install ldcov (pulls the prebuilt lazybgen BGEN reader wheel from PyPI)
 RUN pip install --upgrade pip && \
-    pip install numpy cython && \
     pip install -e . && \
     pip install psutil memory_profiler pandas matplotlib seaborn gprof2dot snakeviz
 
