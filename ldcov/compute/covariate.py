@@ -7,7 +7,7 @@ for covariates, following the implementation in the UK Biobank Pan Ancestry proj
 
 import numpy as np
 import pandas as pd
-from typing import Optional, List, Union, Tuple, Dict
+from typing import Optional, Union, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,9 @@ def standardize_genotypes(
     if center:
         standardized_genotypes -= means[np.newaxis, :]
 
-    # Calculate L2 norms (sqrt of sum of squares) for scaling
+    # Calculate L2 norms (sqrt of sum of squares) for scaling. Default to ones
+    # (identity scaling) so the return is well-defined when scale=False.
+    norms = np.ones(genotypes.shape[1])
     if scale:
         # Column L2 norms via einsum: fuses the square and the column reduction into a
         # single pass with NO N x V temporary. `np.sum(G**2)` would allocate a full-size

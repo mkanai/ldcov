@@ -7,7 +7,12 @@ This package provides tools for:
 3. Efficient handling of BGEN files with support for regions and indexing
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import version as _version, PackageNotFoundError as _PackageNotFoundError
+
+try:
+    __version__ = _version("ldcov")
+except _PackageNotFoundError:  # package not installed (e.g. running from a source tree)
+    __version__ = "0.0.0+unknown"
 
 # Lazy import support for faster startup
 _LAZY_IMPORTS = {
