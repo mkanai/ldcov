@@ -12,7 +12,6 @@ import numpy as np
 import pandas as pd
 import os
 import pytest
-import tempfile
 from pathlib import Path
 
 from ldcov.io.correlation_io import save_correlation_matrix, load_correlation_matrix, BcorReader
@@ -42,7 +41,12 @@ def test_data():
 
 @pytest.mark.parametrize(
     "output_format,file_extension,test_loading",
-    [("matrix", ".ld", True), ("long", ".ld.gz", False), ("bcor", ".bcor", False)],
+    [
+        ("matrix", ".ld", True),
+        ("long", ".ld.gz", True),
+        ("long", ".ld.bgz", True),
+        ("bcor", ".bcor", False),
+    ],
 )
 def test_save_correlation_matrix_formats(tmp_path, output_format, file_extension, test_loading):
     """Test saving correlation matrices in different formats."""
@@ -73,6 +77,188 @@ def test_save_correlation_matrix_formats(tmp_path, output_format, file_extension
     if test_loading:
         loaded_matrix, loaded_variant_info = load_correlation_matrix(str(output_file))
         np.testing.assert_array_almost_equal(test_matrix, loaded_matrix)
+
+
+def test_long_format_round_trip_without_variant_info(tmp_path):
+    """Long format with no variant_info must round-trip via numeric VAR1/VAR2 indices."""
+    n_vars = 8
+    test_matrix = np.random.rand(n_vars, n_vars)
+    test_matrix = (test_matrix + test_matrix.T) / 2
+    np.fill_diagonal(test_matrix, 1.0)
+
+    output_file = tmp_path / "test_noinfo.ld.gz"
+    save_correlation_matrix(test_matrix, str(output_file), variant_info=None, output_format="long")
+
+    loaded_matrix, loaded_variant_info = load_correlation_matrix(str(output_file))
+    assert loaded_variant_info is None
+    np.testing.assert_array_almost_equal(test_matrix, loaded_matrix)
+
+
+def test_long_format_preserves_string_metadata_dtypes(tmp_path):
+    """chrom '01' and numeric-looking rsids must NOT be coerced to ints on load."""
+    n_vars = 4
+    test_matrix = np.random.rand(n_vars, n_vars)
+    test_matrix = (test_matrix + test_matrix.T) / 2
+    np.fill_diagonal(test_matrix, 1.0)
+
+    variant_info = pd.DataFrame(
+        {
+            "rsid": ["001", "002", "003", "004"],  # numeric-looking IDs
+            "chrom": ["01"] * n_vars,  # leading-zero chrom
+            "pos": [10, 20, 30, 40],
+            "ref": ["A"] * n_vars,
+            "alt": ["G"] * n_vars,
+        }
+    )
+
+    output_file = tmp_path / "string_meta.ld"
+    save_correlation_matrix(
+        test_matrix, str(output_file), variant_info=variant_info, output_format="long"
+    )
+
+    loaded_matrix, loaded_vi = load_correlation_matrix(str(output_file))
+    np.testing.assert_array_almost_equal(test_matrix, loaded_matrix)
+    # Variant ordering preserved.
+    assert list(loaded_vi["rsid"]) == list(variant_info["rsid"])
+    # String fields stay strings (not coerced to int 1 / 1,2,3,4).
+    assert list(loaded_vi["chrom"]) == ["01", "01", "01", "01"]
+    assert list(loaded_vi["rsid"]) == ["001", "002", "003", "004"]
+    # pos stays numeric, matching the bcor/.npz loaders.
+    assert np.issubdtype(loaded_vi["pos"].dtype, np.integer)
+    assert list(loaded_vi["pos"]) == [10, 20, 30, 40]
+
+
+def test_long_format_numeric_single_variant_round_trip(tmp_path):
+    """A 1x1 matrix writes its diagonal row; numeric long format must round-trip it."""
+    output_file = tmp_path / "single.ld"
+    save_correlation_matrix(
+        np.array([[0.7]]), str(output_file), variant_info=None, output_format="long"
+    )
+    loaded_matrix, loaded_vi = load_correlation_matrix(str(output_file))
+    assert loaded_matrix.shape == (1, 1)
+    assert loaded_vi is None
+    np.testing.assert_array_almost_equal(loaded_matrix, [[0.7]])
+
+
+def test_long_format_single_variant_with_info_recovers_metadata(tmp_path):
+    """A single variant writes one (diagonal) row, so its metadata is recoverable."""
+    variant_info = pd.DataFrame(
+        {
+            "rsid": ["rs1"],
+            "chrom": ["01"],
+            "pos": [12345],
+            "ref": ["A"],
+            "alt": ["G"],
+        }
+    )
+    output_file = tmp_path / "single_info.ld"
+    save_correlation_matrix(
+        np.array([[0.8]]), str(output_file), variant_info=variant_info, output_format="long"
+    )
+    loaded_matrix, loaded_vi = load_correlation_matrix(str(output_file))
+    np.testing.assert_array_almost_equal(loaded_matrix, [[0.8]])
+    assert loaded_vi is not None
+    assert list(loaded_vi["rsid"]) == ["rs1"]
+    assert list(loaded_vi["chrom"]) == ["01"]  # string metadata preserved
+
+
+def test_long_format_distinguishes_variants_by_allele(tmp_path):
+    """Two variants sharing chrom/pos/rsid but differing by allele must not collapse."""
+    test_matrix = np.array(
+        [
+            [1.0, 0.2, 0.3],
+            [0.2, 1.0, 0.4],
+            [0.3, 0.4, 1.0],
+        ]
+    )
+    # variants 0 and 1 share chrom/pos/rsid; only ref/alt differ (multiallelic).
+    variant_info = pd.DataFrame(
+        {
+            "rsid": ["rsX", "rsX", "rsY"],
+            "chrom": ["1", "1", "1"],
+            "pos": [100, 100, 200],
+            "ref": ["A", "A", "C"],
+            "alt": ["G", "T", "G"],
+        }
+    )
+
+    output_file = tmp_path / "multiallelic.ld"
+    save_correlation_matrix(
+        test_matrix, str(output_file), variant_info=variant_info, output_format="long"
+    )
+
+    loaded_matrix, loaded_vi = load_correlation_matrix(str(output_file))
+    assert len(loaded_vi) == 3  # not collapsed to 2
+    np.testing.assert_array_almost_equal(test_matrix, loaded_matrix)
+
+
+def test_long_format_preserves_non_unit_diagonal(tmp_path):
+    """The long format stores the diagonal, so covariate-adjusted (non-unit) diagonals
+    round-trip losslessly -- both with and without variant_info."""
+    n_vars = 3
+    test_matrix = np.random.rand(n_vars, n_vars)
+    test_matrix = (test_matrix + test_matrix.T) / 2
+    np.fill_diagonal(test_matrix, [0.9, 0.85, 0.95])  # non-unit diagonal
+
+    variant_info = pd.DataFrame(
+        {
+            "rsid": [f"v{i}" for i in range(n_vars)],
+            "chrom": ["1"] * n_vars,
+            "pos": [10, 20, 30],
+            "ref": ["A"] * n_vars,
+            "alt": ["G"] * n_vars,
+        }
+    )
+
+    # With variant_info
+    out_info = tmp_path / "nonunit_info.ld"
+    save_correlation_matrix(
+        test_matrix, str(out_info), variant_info=variant_info, output_format="long"
+    )
+    loaded_info, _ = load_correlation_matrix(str(out_info))
+    np.testing.assert_array_almost_equal(test_matrix, loaded_info)
+
+    # Without variant_info (numeric indices)
+    out_numeric = tmp_path / "nonunit_numeric.ld"
+    save_correlation_matrix(test_matrix, str(out_numeric), variant_info=None, output_format="long")
+    loaded_numeric, _ = load_correlation_matrix(str(out_numeric))
+    np.testing.assert_array_almost_equal(test_matrix, loaded_numeric)
+
+
+def test_long_format_numeric_zero_variant_raises(tmp_path):
+    """A 0-variant numeric long save is rejected: the header-only file would be
+    indistinguishable from a legacy 1-variant file and load back as a 1x1 identity."""
+    output_file = tmp_path / "empty_numeric.ld"
+    with pytest.raises(ValueError, match="0-variant matrix in numeric long format"):
+        save_correlation_matrix(
+            np.empty((0, 0)), str(output_file), variant_info=None, output_format="long"
+        )
+    # Validation happens before any file is opened, so no ambiguous header-only
+    # artifact is left behind for a caller that catches the error.
+    assert not output_file.exists()
+
+
+def test_long_format_variant_info_zero_variant_round_trip(tmp_path):
+    """A 0-variant matrix WITH variant_info has no header-only ambiguity and
+    round-trips to a (0, 0) matrix."""
+    variant_info = pd.DataFrame({"rsid": [], "chrom": [], "pos": [], "ref": [], "alt": []})
+    output_file = tmp_path / "empty_info.ld"
+    save_correlation_matrix(
+        np.empty((0, 0)), str(output_file), variant_info=variant_info, output_format="long"
+    )
+    loaded_matrix, _ = load_correlation_matrix(str(output_file))
+    assert loaded_matrix.shape == (0, 0)
+
+
+def test_long_format_legacy_file_without_diagonal_defaults_to_unit(tmp_path):
+    """Older long files written without the diagonal still load: the unwritten
+    diagonal defaults to 1.0 (the matrix is initialized to the identity)."""
+    # Hand-write a legacy numeric long file: only the off-diagonal pair (0, 1).
+    legacy = tmp_path / "legacy.ld"
+    legacy.write_text("#VAR1\tVAR2\tR\n0\t1\t0.5\n")
+    loaded, vi = load_correlation_matrix(str(legacy))
+    assert vi is None
+    np.testing.assert_array_almost_equal(loaded, [[1.0, 0.5], [0.5, 1.0]])
 
 
 # ==================== BCOR Format Tests ====================
