@@ -45,13 +45,13 @@ Examples:
 
   # Use specific columns as covariates
   ldcov --bgen input.bgen --out output --compute-ld -c covariates.txt --covariate-cols PC1 PC2 PC3
-  
+
   # Pre-compute projection matrix for later use
   ldcov --precompute-projection -c covariates.txt --sample data.sample --out myproject
-  
+
   # Use pre-computed projection matrix
   ldcov --bgen input.bgen --projection-matrix myproject.proj.npz --compute-ld --out output
-  
+
   # Compute LD and save projection matrix for future use
   ldcov --bgen input.bgen -c covariates.txt --compute-ld --save-projection --out output
         """,

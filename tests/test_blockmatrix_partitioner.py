@@ -1,4 +1,3 @@
-import pytest
 from ldcov.io.blockmatrix.partitioner import GridPartitioner
 
 

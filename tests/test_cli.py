@@ -9,7 +9,6 @@ This module tests:
 """
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -186,8 +185,10 @@ class TestCLI:
             ]
         )
 
-        # Should raise an error
+        # Should raise an error about the missing ID column, not some unrelated failure.
         assert result.exit_code != 0
+        assert "NONEXISTENT" in result.output
+        assert "not found" in result.output.lower()
 
     # ==================== Output Format Tests ====================
 
@@ -294,6 +295,8 @@ class TestCLI:
         )
 
         assert result.exit_code != 0
+        assert "--compute-ld" in result.output
+        assert "--precompute-projection" in result.output
 
     def test_invalid_bgen_file(self, run_cli):
         """Test error with invalid BGEN file."""
@@ -310,6 +313,7 @@ class TestCLI:
         )
 
         assert result.exit_code != 0
+        assert "BGEN file not found" in result.output
 
     def test_whitespace_delimited_covariates(self, bgen_file, bgi_file, sample_file, run_cli):
         """Test loading whitespace-delimited covariate file."""
@@ -407,10 +411,13 @@ class TestCLI:
         # Should complete successfully
         assert os.path.exists(f"{output_prefix}.ld")
 
-    def test_invalid_covariate_columns(self, bgen_file, bgi_file, run_cli):
+    def test_invalid_covariate_columns(self, bgen_file, bgi_file, sample_file, run_cli):
         """Test error when specifying non-existent covariate columns."""
         output_prefix = os.path.join(self.temp_dir, "invalid_cols")
 
+        # Pass --sample so the BGEN sample IDs align with the covariate file's IIDs;
+        # otherwise the run fails earlier on sample-mismatch and never reaches the
+        # covariate-column validation this test is meant to exercise.
         result = run_cli(
             [
                 "--bgen",
@@ -425,11 +432,15 @@ class TestCLI:
                 "NonExistentColumn",
                 "--bgi",
                 str(bgi_file),
+                "--sample",
+                str(sample_file),
             ]
         )
 
-        # Should raise an error
+        # Should raise an error naming the missing covariate column.
         assert result.exit_code != 0
+        assert "NonExistentColumn" in result.output
+        assert "not found" in result.output.lower()
 
 
 def test_cli_emits_bcor_idx_by_default(tmp_path):
@@ -437,14 +448,21 @@ def test_cli_emits_bcor_idx_by_default(tmp_path):
     out_prefix = tmp_path / "ld_out"
     result = subprocess.run(
         [
-            sys.executable, "-m", "ldcov.cli.main",
-            "--bgen", str(examples / "data.bgen"),
-            "--sample", str(examples / "data.sample"),
-            "--out", str(out_prefix),
+            sys.executable,
+            "-m",
+            "ldcov.cli.main",
+            "--bgen",
+            str(examples / "data.bgen"),
+            "--sample",
+            str(examples / "data.sample"),
+            "--out",
+            str(out_prefix),
             "--compute-ld",
-            "--output-format", "bcor",
+            "--output-format",
+            "bcor",
         ],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "ld_out.bcor").exists()
@@ -456,15 +474,22 @@ def test_cli_no_bcor_idx_flag_skips_sidecar(tmp_path):
     out_prefix = tmp_path / "ld_out"
     result = subprocess.run(
         [
-            sys.executable, "-m", "ldcov.cli.main",
-            "--bgen", str(examples / "data.bgen"),
-            "--sample", str(examples / "data.sample"),
-            "--out", str(out_prefix),
+            sys.executable,
+            "-m",
+            "ldcov.cli.main",
+            "--bgen",
+            str(examples / "data.bgen"),
+            "--sample",
+            str(examples / "data.sample"),
+            "--out",
+            str(out_prefix),
             "--compute-ld",
-            "--output-format", "bcor",
+            "--output-format",
+            "bcor",
             "--no-bcor-idx",
         ],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "ld_out.bcor").exists()
