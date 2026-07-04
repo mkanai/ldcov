@@ -94,11 +94,35 @@ def test_extract_ld_zfile_order_and_flip(tmp_path):
         z=zpath,
         out=str(tmp_path / "z_out"),
         output_format="npz",
+        allow_allele_swap=True,  # swap matching is opt-in
     )
     assert list(variants["idx"]) == [2, 0]  # preserves z order
     assert list(variants["flipped"]) == [False, True]
     # out[0,1] corresponds to (idx2, idx0) with idx0 flipped -> -full[2,0]
     assert matrix[0, 1] == pytest.approx(-full[2, 0], abs=1e-9)
+
+
+def test_extract_ld_zfile_no_allele_swap(tmp_path):
+    make_symmetric_bm(tmp_path)
+    variant_index = _make_variant_index(tmp_path, n=6)
+    zpath = str(tmp_path / "in.z")
+    # Same z-file: the swapped-orientation variant (v0: G A) must be dropped with
+    # allow_allele_swap=False, leaving only the exact-orientation v2.
+    with open(zpath, "w") as fh:
+        fh.write("rsid chromosome position allele1 allele2\n")
+        fh.write("v2 1 120 A G\n")
+        fh.write("v0 1 100 G A\n")
+    matrix, variants = extract_ld(
+        bm_path=str(tmp_path / "m.bm"),
+        variant_index_path=variant_index,
+        z=zpath,
+        out=str(tmp_path / "z_out_noswap"),
+        output_format="npz",
+        on_missing="drop",
+        allow_allele_swap=False,
+    )
+    assert list(variants["idx"]) == [2]
+    assert list(variants["flipped"]) == [False]
 
 
 def test_extract_ld_requires_one_selector(tmp_path):
