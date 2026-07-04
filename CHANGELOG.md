@@ -28,6 +28,8 @@ at the bottom.
   returns a DataFrame of `idx` (−1 where unmatched) and `flip`, aligned to the input.
   Intended for locus-scale callers (e.g. SLALOM) that previously re-implemented this.
 
+## [0.4.0] - 2026-06-24
+
 First release on PyPI: `pip install ldcov`.
 
 ### Changed
