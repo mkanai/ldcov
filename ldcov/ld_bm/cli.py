@@ -58,6 +58,14 @@ def add_ld_bm_arguments(parser):
         "(e.g. '{\"anon\": true}' for credentials/endpoint). "
         "s3:// defaults to anonymous when omitted.",
     )
+    group.add_argument(
+        "--allow-allele-swap",
+        dest="allow_allele_swap",
+        action="store_true",
+        default=False,
+        help="Also match --z variants stored with ref/alt swapped, sign-flipping their r "
+        "(default: exact ref/alt orientation only).",
+    )
 
 
 def run_ld_bm(args):
@@ -102,5 +110,6 @@ def run_ld_bm(args):
         block_cache=args.block_cache,
         max_workers=args.fetch_workers,
         storage_options=storage_options,
+        allow_allele_swap=getattr(args, "allow_allele_swap", False),
     )
     logger.info("ld-bm extraction complete: %s", args.out)

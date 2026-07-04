@@ -8,7 +8,25 @@ make breaking changes while the API stabilizes).
 Versions are derived from git tags via `setuptools_scm`; see the "Versioning" note
 at the bottom.
 
-## [0.4.0] - 2026-06-24
+## [0.5.0] - 2026-07-04
+
+### Changed (breaking)
+- **`VariantIndex.match()` no longer matches the ref/alt swap by default.** Matching is now
+  exact-orientation only unless the caller opts in with `allow_allele_swap=True`. Previously
+  `match()` always tried the `(alt, ref)` swap and returned `flip=True`; that implicit swap
+  could silently sign-flip r for variants the caller intended to match exactly. A variant
+  present only in swapped orientation now returns `(None, None)` by default.
+- The z-file path of `extract_ld` / `ldcov --ld-bm` likewise defaults to exact orientation;
+  the opt-out `--no-allele-swap` flag is replaced by the opt-in `--allow-allele-swap`.
+
+### Added
+- `allow_allele_swap` parameter (default `False`) on `VariantIndex.match()` and
+  `extract_ld()`, and the `--allow-allele-swap` flag on `ldcov --ld-bm`, to re-enable
+  ref/alt-swap matching (with r sign-flipped) when desired.
+- `VariantIndex.match_variants(variants, allow_allele_swap=False)`: a vectorized batch matcher
+  that issues one `query_region` per contig (instead of a pyarrow scan per variant) and
+  returns a DataFrame of `idx` (−1 where unmatched) and `flip`, aligned to the input.
+  Intended for locus-scale callers (e.g. SLALOM) that previously re-implemented this.
 
 First release on PyPI: `pip install ldcov`.
 

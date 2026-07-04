@@ -135,7 +135,7 @@ def _read_zfile(path: str) -> pd.DataFrame:
     return df
 
 
-def _resolve_targets(vi, region, z, idx_range, on_missing):
+def _resolve_targets(vi, region, z, idx_range, on_missing, allow_allele_swap=False):
     """Return a DataFrame with columns: idx, chrom, pos, ref, alt, rsid, flipped (in matrix order)."""
     if region is not None:
         chrom, (start, end) = parse_region(region)
@@ -186,6 +186,7 @@ def _resolve_targets(vi, region, z, idx_range, on_missing):
                 int(zr["position"]),
                 ref=str(zr["allele1"]),
                 alt=str(zr["allele2"]),
+                allow_allele_swap=allow_allele_swap,
             )
             if idx is None:
                 unmatched.append(str(zr["rsid"]))
@@ -231,10 +232,15 @@ def extract_ld(
     max_workers=4,
     storage_options=None,
     n_samples=0,
+    allow_allele_swap=False,
 ):
     """Extract a submatrix from a Hail BlockMatrix LD store and write outputs.
 
     Exactly one of region / z / idx_range must be given. Returns (matrix, variant_df).
+
+    ``allow_allele_swap`` controls z-file variant matching: when False (default) only the exact
+    ref/alt orientation matches; when True a z-file variant also matches the panel's ref/alt
+    swap (and its r is sign-flipped). Ignored for the region / idx_range selectors.
     """
     selectors = [s is not None for s in (region, z, idx_range)]
     if sum(selectors) != 1:
@@ -248,7 +254,9 @@ def extract_ld(
     if vi is None and idx_range is None:
         raise ValueError("variant_index is required for region/z selectors")
     # idx_range works without a variant index (placeholder metadata is synthesized).
-    targets = _resolve_targets(vi, region, z, idx_range, on_missing)
+    targets = _resolve_targets(
+        vi, region, z, idx_range, on_missing, allow_allele_swap=allow_allele_swap
+    )
     if len(targets) == 0:
         logger.warning("No variants matched the selector; output will be empty")
 
