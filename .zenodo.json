@@ -1,0 +1,22 @@
+{
+  "upload_type": "software",
+  "title": "ldcov: Efficient linkage disequilibrium calculation with covariate adjustment",
+  "description": "A Python package for efficient linkage disequilibrium calculation with covariate adjustment, applying the Frisch-Waugh-Lovell theorem.",
+  "creators": [
+    {
+      "name": "Kanai, Masahiro",
+      "orcid": "0000-0001-5165-4408",
+      "affiliation": "Massachusetts General Hospital & Broad Institute of MIT and Harvard"
+    }
+  ],
+  "license": "mit",
+  "access_right": "open",
+  "related_identifiers": [
+    {
+      "identifier": "10.1101/2025.11.25.25340489",
+      "relation": "isDescribedBy",
+      "resource_type": "publication-preprint",
+      "scheme": "doi"
+    }
+  ]
+}
