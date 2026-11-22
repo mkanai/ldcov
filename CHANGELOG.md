@@ -8,6 +8,18 @@ make breaking changes while the API stabilizes).
 Versions are derived from git tags via `setuptools_scm`; see the "Versioning" note
 at the bottom.
 
+## [0.6.0] - 2026-11-21
+
+### Changed
+- **Requires lazybgen 0.3.0 or later.** 0.3.0 reads 8-bit zlib BGEN files 1.1-1.2x
+  faster than 0.2.0 at 5k samples and 1.4x at 500k, sizes its default worker pool to
+  the CPUs the job may use (CPU affinity and cgroup quota), and fixes v1.1 and zlib
+  decoding to follow the BGEN spec. The `load_bgen` API ldcov calls is unchanged.
+
+### Removed
+- **Python 3.9 is no longer supported**; the floor is now 3.10, which lazybgen already
+  required.
+
 ## [0.5.0] - 2026-07-04
 
 ### Changed (breaking)
@@ -97,6 +109,8 @@ produces version `X.Y.Z`; commits after a tag get a development version like
 metadata (`importlib.metadata`), falling back to `0.0.0+unknown` when run from an
 unbuilt source tree.
 
+[0.6.0]: https://github.com/mkanai/ldcov/releases/tag/v0.6.0
+[0.5.0]: https://github.com/mkanai/ldcov/releases/tag/v0.5.0
 [0.4.0]: https://github.com/mkanai/ldcov/releases/tag/v0.4.0
 [0.3.0]: https://github.com/mkanai/ldcov/releases/tag/v0.3.0
 [0.2.0]: https://github.com/mkanai/ldcov/releases/tag/v0.2.0
