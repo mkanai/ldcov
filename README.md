@@ -19,7 +19,7 @@ A Python package for efficient linkage disequilibrium (LD) calculation with cova
 
 ### Requirements
 
-- Python ≥ 3.9
+- Python ≥ 3.10
 
 [`lazybgen`](https://github.com/mkanai/lazybgen), the BGEN reader dependency, installs automatically from PyPI as a prebuilt binary wheel (Linux, macOS arm64), so no compiler is required.
 
@@ -389,7 +389,7 @@ For efficiency, the QR decomposition can be pre-computed once and reused across 
 
 Installed automatically with the package:
 
-- lazybgen >= 0.1 (BGEN reader; prebuilt binary wheel)
+- lazybgen >= 0.3.0 (BGEN reader; prebuilt binary wheel)
 - numpy >= 1.19.0
 - pandas >= 1.0.0
 - gcsfs >= 0.7.0

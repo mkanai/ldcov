@@ -11,13 +11,12 @@ authors = [
 ]
 # Using table format for license to support older setuptools versions
 license = {text = "MIT License"}
-# >=3.9 to match lazybgen, which provides the BGEN reader
-requires-python = ">=3.9"
+# >=3.10 to match lazybgen, which provides the BGEN reader
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -27,7 +26,7 @@ classifiers = [
 dynamic = ["version"]
 dependencies = [
     # BGEN reader (extracted from ldcov), published to PyPI with binary wheels.
-    "lazybgen>=0.1",
+    "lazybgen>=0.3.0",
     "numpy>=1.19.0",
     "pandas>=1.0.0",
     "gcsfs>=0.7.0",
@@ -64,7 +63,7 @@ fallback_version = "0.1.0"
 
 [tool.black]
 line-length = 100
-target-version = ['py39', 'py310', 'py311']
+target-version = ['py310', 'py311', 'py312', 'py313']
 include = '\.pyi?$'
 
 [tool.isort]
